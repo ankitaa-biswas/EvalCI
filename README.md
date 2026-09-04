@@ -27,8 +27,8 @@ RAG systems have two distinct components that can independently break:
 
 | Component | Failure Mode | Traditional CI Detection |
 |-----------|-------------|--------------------------|
-| **Retriever** | Wrong chunks fetched, embedding drift, index staleness | ❌ Not detected |
-| **Generator** | Hallucination, prompt template regression, model version change | ❌ Not detected |
+| **Retriever** | Wrong chunks fetched, embedding drift, index staleness |  Not detected |
+| **Generator** | Hallucination, prompt template regression, model version change |  Not detected |
 
 Standard test suites check *that* quality dropped. They cannot tell you *why* or *which component* to fix. A developer staring at a dashboard showing "correctness dropped from 0.82 to 0.71" has no idea whether to look at ChromaDB, the prompt template, or the LLM model version.
 
@@ -36,7 +36,7 @@ Standard test suites check *that* quality dropped. They cannot tell you *why* or
 
 ---
 
-## 🔍 The Regression Fingerprint — EvalCI's Core Innovation
+##  The Regression Fingerprint — EvalCI's Core Innovation
 
 The **Regression Fingerprint Report** is a structured diagnostic document generated whenever an evaluation run scores lower than the baseline. It answers two questions no existing RAG eval tool automates:
 
