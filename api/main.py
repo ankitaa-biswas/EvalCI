@@ -12,7 +12,10 @@ from fastapi.staticfiles import StaticFiles
 from api.middleware.auth import APIKeyMiddleware
 from api.middleware.rate_limit import RateLimitMiddleware
 from api.routes import evaluate, results, stream
+from core.observability import get_logger, metrics
 from db.database import init_db, close_db
+
+logger = get_logger(__name__)
 
 
 @asynccontextmanager
@@ -29,9 +32,14 @@ async def lifespan(app: FastAPI):
         - Gracefully close the DB connection pool.
         - Flush any pending Redis operations.
     """
+    logger.info("EvalCI starting up — initialising database connection pool.")
     await init_db()
+    metrics.record_eval_started("system", "startup")
+    logger.info("EvalCI startup complete — observability wired, accepting requests.")
     yield
+    logger.info("EvalCI shutting down — closing database connection pool.")
     await close_db()
+    logger.info("EvalCI shutdown complete.")
 
 
 app = FastAPI(
@@ -57,14 +65,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# API key authentication — reads EVALCI_API_KEYS from env (comma-separated).
-# Runs after CORS so OPTIONS pre-flight requests are not blocked.
-app.add_middleware(APIKeyMiddleware)
-
-# Per-requester rate limiting — reads REDIS_URL and RATE_LIMIT_PER_MINUTE from
-# env. Registered after APIKeyMiddleware so that request.state.api_key is
-# available as the rate-limit identifier for keyed traffic.
+# Starlette applies middleware in reverse registration order, so the last
+# middleware added runs first on incoming requests.
+#
+# Execution order on request (outermost → innermost):
+#   1. CORSMiddleware      — handles OPTIONS pre-flight before auth fires
+#   2. APIKeyMiddleware    — validates X-API-Key, sets request.state.api_key
+#   3. RateLimitMiddleware — uses request.state.api_key as identifier
+#
+# Registration order (reversed): RateLimit first, then APIKey.
 app.add_middleware(RateLimitMiddleware)
+app.add_middleware(APIKeyMiddleware)
 
 # ---------------------------------------------------------------------------
 # Route registration
