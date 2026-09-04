@@ -21,6 +21,7 @@ jobs:
   trigger-eval:
     name: Trigger EvalCI Evaluation
     runs-on: ubuntu-latest
+    continue-on-error: true
     outputs:
       run_id: ${{ steps.trigger.outputs.run_id }}
 

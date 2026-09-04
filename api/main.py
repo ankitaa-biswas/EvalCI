@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from api.middleware.auth import APIKeyMiddleware
+from api.middleware.rate_limit import RateLimitMiddleware
 from api.routes import evaluate, results, stream
 from db.database import init_db, close_db
 
@@ -59,6 +60,11 @@ app.add_middleware(
 # API key authentication — reads EVALCI_API_KEYS from env (comma-separated).
 # Runs after CORS so OPTIONS pre-flight requests are not blocked.
 app.add_middleware(APIKeyMiddleware)
+
+# Per-requester rate limiting — reads REDIS_URL and RATE_LIMIT_PER_MINUTE from
+# env. Registered after APIKeyMiddleware so that request.state.api_key is
+# available as the rate-limit identifier for keyed traffic.
+app.add_middleware(RateLimitMiddleware)
 
 # ---------------------------------------------------------------------------
 # Route registration
