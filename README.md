@@ -2,7 +2,7 @@
 
 > **Automatically test your RAG pipeline on every Git push. Score it. Fingerprint what broke. Ship with confidence.**
 
-[![CI](https://github.com/your-org/evalci/actions/workflows/evalci.yml/badge.svg)](https://github.com/your-org/evalci/actions)
+[![CI](https://github.com/ankitaa-biswas/evalci/actions/workflows/evalci.yml/badge.svg)](https://github.com/ankitaa-biswas/evalci/actions)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.111-green)](https://fastapi.tiangolo.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -89,7 +89,7 @@ No existing production RAG evaluation tool (including bare Ragas, TruLens, RAGAS
 | **Cache** | Redis | Score caching by commit SHA |
 | **Scoring** | Ragas | correctness, faithfulness, context_recall, context_precision |
 | **Vector DB** | ChromaDB | RAG document retrieval target |
-| **LLM** | OpenAI GPT-4o-mini (or Claude) | RAG generation + Ragas judge |
+| **LLM** | Google Gemini 1.5 Flash | RAG generation + Ragas judge |
 | **Streaming** | Server-Sent Events (SSE) | Live dashboard updates |
 | **CI** | GitHub Actions | Automated trigger + quality gate |
 | **Frontend** | Plain HTML + JavaScript | Real-time evaluation dashboard |
@@ -158,7 +158,7 @@ evalci/
 ### 2. Clone and install
 
 ```bash
-git clone https://github.com/your-org/evalci.git
+git clone https://github.com/ankitaa-biswas/evalci.git
 cd evalci
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
@@ -168,7 +168,7 @@ pip install -r requirements.txt
 
 ```bash
 cp .env.example .env
-# Edit .env — set OPENAI_API_KEY, DATABASE_URL, REDIS_URL at minimum
+# Edit .env — set GOOGLE_API_KEY, EVALCI_API_KEYS, DATABASE_URL, REDIS_URL at minimum
 ```
 
 ### 4. Start infrastructure
@@ -234,7 +234,8 @@ Add these secrets to your repository (`Settings → Secrets and variables → Ac
 | Secret | Value |
 |--------|-------|
 | `EVALCI_API_URL` | Your deployed EvalCI API URL |
-| `EVALCI_API_KEY` | Bearer token for API authentication |
+| `EVALCI_API_KEYS` | Bearer token for API authentication |
+| `GOOGLE_API_KEY` | Gemini API key for scoring and diagnosis |
 
 The workflow (`.github/workflows/evalci.yml`) runs on every push to `main` and every pull request. It:
 1. Triggers an evaluation via `POST /evaluate`
@@ -260,18 +261,7 @@ EvalCI uses four Ragas metrics:
 
 ---
 
-## Development Roadmap
 
-| Cycle | Focus | Status |
-|-------|-------|--------|
-| 1 | Project skeleton (this cycle) | ✅ Complete |
-| 2 | Core implementation — evaluator, fingerprinter, cache, queue, routes | ⏳ Next |
-| 3 | Database migrations (Alembic), seed data, end-to-end integration tests | 📋 Planned |
-| 4 | Dashboard UI — live feed, heatmap, fingerprint panel | 📋 Planned |
-| 5 | GitHub Actions full implementation, PR comment bot | 📋 Planned |
-| 6 | Production hardening — auth, rate limiting, observability | 📋 Planned |
-
----
 
 ## License
 
