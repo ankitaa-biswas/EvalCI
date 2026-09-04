@@ -1,0 +1,302 @@
+[
+  {
+    "id": "q001",
+    "category": "factual_recall",
+    "question": "What is the boiling point of water at standard atmospheric pressure?",
+    "ground_truth": "The boiling point of water at standard atmospheric pressure (1 atm) is 100 degrees Celsius (212 degrees Fahrenheit or 373.15 Kelvin)."
+  },
+  {
+    "id": "q002",
+    "category": "factual_recall",
+    "question": "Who developed the theory of general relativity?",
+    "ground_truth": "Albert Einstein developed the theory of general relativity, which he published in 1915."
+  },
+  {
+    "id": "q003",
+    "category": "factual_recall",
+    "question": "What is the chemical symbol for gold?",
+    "ground_truth": "The chemical symbol for gold is Au, derived from the Latin word 'Aurum'."
+  },
+  {
+    "id": "q004",
+    "category": "factual_recall",
+    "question": "In what year did the Berlin Wall fall?",
+    "ground_truth": "The Berlin Wall fell on November 9, 1989."
+  },
+  {
+    "id": "q005",
+    "category": "factual_recall",
+    "question": "What is the speed of light in a vacuum?",
+    "ground_truth": "The speed of light in a vacuum is approximately 299,792,458 metres per second (often rounded to 3 × 10^8 m/s)."
+  },
+  {
+    "id": "q006",
+    "category": "factual_recall",
+    "question": "What programming language was created by Guido van Rossum?",
+    "ground_truth": "Python was created by Guido van Rossum, with the first version released in 1991."
+  },
+  {
+    "id": "q007",
+    "category": "multi_hop_reasoning",
+    "question": "If the temperature in Dallas is 20°C higher than in Chicago, and Chicago is at -5°C, what is the temperature difference in Fahrenheit?",
+    "ground_truth": "Dallas would be at 15°C. The difference of 20°C is equivalent to 36°F (multiply by 9/5)."
+  },
+  {
+    "id": "q008",
+    "category": "multi_hop_reasoning",
+    "question": "A company's revenue grew 15% in Year 1 and shrank 10% in Year 2 starting from $1M. What is the revenue after Year 2?",
+    "ground_truth": "After Year 1: $1,150,000. After Year 2 (10% drop): $1,035,000."
+  },
+  {
+    "id": "q009",
+    "category": "multi_hop_reasoning",
+    "question": "If Python 3.12 was released 12 years after Python 3.0 (2008), in what year was Python 3.12 released and how many years from Python 3.0 to now (2026)?",
+    "ground_truth": "Python 3.12 was released in 2023 (approximately 15 years after 3.0 in 2008). From Python 3.0 to 2026 is 18 years."
+  },
+  {
+    "id": "q010",
+    "category": "multi_hop_reasoning",
+    "question": "A train travels 300 km at 100 km/h then 200 km at 80 km/h. What is its average speed for the full journey?",
+    "ground_truth": "Total distance: 500 km. Total time: 3h + 2.5h = 5.5h. Average speed: 500/5.5 ≈ 90.9 km/h."
+  },
+  {
+    "id": "q011",
+    "category": "definition_lookup",
+    "question": "What is retrieval-augmented generation (RAG)?",
+    "ground_truth": "Retrieval-Augmented Generation (RAG) is an AI framework that combines a retrieval component (typically a vector database) with a generative language model. The retriever finds relevant document chunks; the generator uses them as grounding context to produce accurate, citation-backed answers."
+  },
+  {
+    "id": "q012",
+    "category": "definition_lookup",
+    "question": "What is a transformer architecture in machine learning?",
+    "ground_truth": "A transformer is a deep learning architecture introduced in 'Attention Is All You Need' (2017) that relies on self-attention mechanisms to process sequential data in parallel, enabling efficient training on large datasets. It is the basis for models like BERT and GPT."
+  },
+  {
+    "id": "q013",
+    "category": "definition_lookup",
+    "question": "What is cosine similarity?",
+    "ground_truth": "Cosine similarity measures the cosine of the angle between two non-zero vectors in an inner product space. Values range from -1 (opposite) to 1 (identical direction), with 0 indicating orthogonality. Widely used in NLP to measure semantic similarity between embeddings."
+  },
+  {
+    "id": "q014",
+    "category": "definition_lookup",
+    "question": "What does ACID stand for in database systems?",
+    "ground_truth": "ACID stands for Atomicity, Consistency, Isolation, and Durability — the four properties that guarantee reliable database transactions."
+  },
+  {
+    "id": "q015",
+    "category": "definition_lookup",
+    "question": "What is a vector database?",
+    "ground_truth": "A vector database stores high-dimensional numerical embeddings and supports efficient similarity search (e.g., approximate nearest neighbour search). Examples include ChromaDB, Pinecone, Weaviate, and Qdrant. They are the retrieval backbone of most RAG systems."
+  },
+  {
+    "id": "q016",
+    "category": "causal_reasoning",
+    "question": "Why does increasing chunk overlap in RAG document ingestion generally improve answer grounding?",
+    "ground_truth": "Higher chunk overlap ensures contextually important sentences that appear near chunk boundaries are not lost. This reduces cases where relevant evidence is split between two non-retrieved chunks, improving faithfulness and context recall."
+  },
+  {
+    "id": "q017",
+    "category": "causal_reasoning",
+    "question": "Why might an LLM still generate a hallucinated answer even when grounding context is provided?",
+    "ground_truth": "An LLM may ignore retrieved context if it is trained with strong prior knowledge that overrides context. Additionally, ambiguous or low-quality retrieved chunks can confuse the model. High temperature sampling also increases hallucination probability."
+  },
+  {
+    "id": "q018",
+    "category": "causal_reasoning",
+    "question": "What causes context precision to drop while context recall stays high?",
+    "ground_truth": "Context precision drops when irrelevant chunks are retrieved alongside relevant ones (noisy retrieval). Context recall remains high because the relevant chunks are still being fetched. This suggests the embedder is retrieving too broadly — a top-k that is too high or poor embedding quality."
+  },
+  {
+    "id": "q019",
+    "category": "causal_reasoning",
+    "question": "Why does reducing the LLM temperature typically lower hallucination risk in RAG systems?",
+    "ground_truth": "Lower temperature makes the LLM's sampling distribution sharper (more deterministic), causing it to more faithfully reproduce information from its grounding context rather than generating creative interpolations from parametric memory."
+  },
+  {
+    "id": "q020",
+    "category": "causal_reasoning",
+    "question": "Why might re-indexing a ChromaDB collection after adding new documents cause a temporary evaluation score drop?",
+    "ground_truth": "Re-indexing forces re-computation of all embeddings and may alter approximate nearest-neighbour graph structures. During this period, query results may be inconsistent. If the embedding model was also changed, all similarity relationships are invalidated, causing significant score drops."
+  },
+  {
+    "id": "q021",
+    "category": "procedural_knowledge",
+    "question": "What are the steps to set up a ChromaDB collection for a RAG system?",
+    "ground_truth": "1. Install chromadb. 2. Create a client (HttpClient or EphemeralClient). 3. Create or get a collection with a name and embedding function. 4. Split documents into chunks. 5. Generate embeddings. 6. Upsert chunks with IDs, embeddings, and metadata. 7. Test with a query."
+  },
+  {
+    "id": "q022",
+    "category": "procedural_knowledge",
+    "question": "How do you run a Ragas evaluation on a set of question-answer-context triplets?",
+    "ground_truth": "1. Install ragas. 2. Prepare a HuggingFace Dataset with columns: question, answer, contexts (list of strings), ground_truth. 3. Select metrics (faithfulness, answer_correctness, etc.). 4. Call ragas.evaluate(dataset, metrics). 5. Convert result to DataFrame for analysis."
+  },
+  {
+    "id": "q023",
+    "category": "procedural_knowledge",
+    "question": "How do you configure a Celery worker to use Redis as a broker?",
+    "ground_truth": "1. Install celery and redis. 2. Create a Celery instance: app = Celery('name', broker='redis://localhost:6379/0'). 3. Define tasks with @app.task decorator. 4. Start worker: celery -A module worker --loglevel=info. 5. Enqueue with task.delay() or task.apply_async()."
+  },
+  {
+    "id": "q024",
+    "category": "procedural_knowledge",
+    "question": "What steps are needed to implement Server-Sent Events in FastAPI?",
+    "ground_truth": "1. Create an async generator that yields 'data: <json>\\n\\n' strings. 2. Return a StreamingResponse with media_type='text/event-stream'. 3. On the client, use new EventSource('/stream/id'). 4. Listen with source.onmessage. 5. Add heartbeat pings to prevent connection timeout."
+  },
+  {
+    "id": "q025",
+    "category": "procedural_knowledge",
+    "question": "How do you trigger a GitHub Actions workflow on every push to the main branch?",
+    "ground_truth": "In .github/workflows/your-workflow.yml, set: 'on: push: branches: [main]'. The workflow will trigger on every push. Use 'on: pull_request' to also trigger on PRs. Jobs and steps define the actual CI pipeline."
+  },
+  {
+    "id": "q026",
+    "category": "comparative_analysis",
+    "question": "What are the key differences between Ragas faithfulness and answer_correctness metrics?",
+    "ground_truth": "Faithfulness (grounding) measures whether the answer is factually supported by the retrieved contexts — independent of whether it's correct. Answer_correctness measures semantic similarity to the ground truth answer. A RAG system can be faithful (sticks to context) but incorrect (bad retrieval), or correct but unfaithful (LLM uses parametric knowledge instead of context)."
+  },
+  {
+    "id": "q027",
+    "category": "comparative_analysis",
+    "question": "How does ChromaDB differ from Pinecone as a vector store for RAG?",
+    "ground_truth": "ChromaDB is open-source, runs locally or self-hosted, and is ideal for development and small-to-medium scale. Pinecone is a managed cloud service with built-in scaling, replication, and metadata filtering at enterprise scale. ChromaDB is free; Pinecone charges based on vector count and queries."
+  },
+  {
+    "id": "q028",
+    "category": "comparative_analysis",
+    "question": "What is the difference between context recall and context precision in Ragas?",
+    "ground_truth": "Context recall measures the fraction of ground-truth relevant information that was successfully retrieved (coverage). Context precision measures the fraction of retrieved chunks that are actually relevant (signal-to-noise ratio). High recall + low precision = noisy retrieval. Low recall + high precision = insufficient retrieval."
+  },
+  {
+    "id": "q029",
+    "category": "comparative_analysis",
+    "question": "When would you prefer SQLAlchemy Core over SQLAlchemy ORM?",
+    "ground_truth": "SQLAlchemy Core is preferred for bulk operations, complex joins, or when full SQL control is needed with minimal abstraction overhead. The ORM is better for object-centric code, relationships, and rapid development. Core is faster for bulk inserts; ORM is more maintainable for complex domain models."
+  },
+  {
+    "id": "q030",
+    "category": "comparative_analysis",
+    "question": "What are the trade-offs between synchronous and asynchronous SQLAlchemy in a FastAPI application?",
+    "ground_truth": "Async SQLAlchemy (asyncpg) allows FastAPI to handle many concurrent requests without blocking the event loop during DB queries. However, it is more complex to use (async/await everywhere, no lazy loading by default). Sync SQLAlchemy is simpler but requires running DB calls in a thread pool executor to avoid blocking."
+  },
+  {
+    "id": "q031",
+    "category": "troubleshooting",
+    "question": "A RAG system returns relevant contexts but the LLM still generates an answer that contradicts the context. What should you investigate first?",
+    "ground_truth": "First check the prompt template — ensure context is clearly separated from the question and explicitly instructs the model to rely ONLY on the context. Then check LLM temperature (lower it). Review if the model has very strong prior beliefs that override context (try a smaller, less-opinionated model)."
+  },
+  {
+    "id": "q032",
+    "category": "troubleshooting",
+    "question": "Your Ragas context_recall score drops to near 0 after adding new documents to ChromaDB. What are the likely causes?",
+    "ground_truth": "Likely causes: 1. Collection was not re-indexed after document addition. 2. New documents used a different embedding model, creating incompatible vectors. 3. Chunk IDs collided with existing IDs, causing silent overwrites. 4. The new documents are in a format that wasn't parsed correctly (empty chunks)."
+  },
+  {
+    "id": "q033",
+    "category": "troubleshooting",
+    "question": "A Celery worker accepts a task but the task never appears to complete. What should you check?",
+    "ground_truth": "Check: 1. Worker logs for exceptions. 2. task_acks_late setting — the task may have been re-queued. 3. Soft/hard time limits — task may be silently killed. 4. Redis broker connectivity. 5. Worker prefetch multiplier — it may be holding tasks without executing. 6. Deadlocks in async code called from sync Celery task."
+  },
+  {
+    "id": "q034",
+    "category": "troubleshooting",
+    "question": "SSE events stop appearing in the browser after 30 seconds even though the eval run is still ongoing. What is the likely cause?",
+    "ground_truth": "Most likely a proxy timeout (nginx, AWS ALB, etc.) closes idle connections. Fix: send heartbeat 'ping' events every 15 seconds. Also check load balancer timeout settings and ensure the SSE response has 'X-Accel-Buffering: no' header to disable nginx buffering."
+  },
+  {
+    "id": "q035",
+    "category": "troubleshooting",
+    "question": "FastAPI returns a 422 Unprocessable Entity when the GitHub Actions workflow POSTs to /evaluate. What is the most likely issue?",
+    "ground_truth": "The request body does not match the Pydantic model schema. Common causes: missing required fields (commit_sha, branch), wrong data types, or commit_sha not exactly 40 hex characters. Check the GitHub Actions CURL/payload and compare to the EvalRunRequest schema."
+  },
+  {
+    "id": "q036",
+    "category": "architecture_design",
+    "question": "Why is it beneficial to score RAG evaluation runs asynchronously rather than synchronously in the /evaluate API endpoint?",
+    "ground_truth": "Synchronous scoring would block the HTTP request for the duration of the evaluation (potentially 10+ minutes for 50 questions). Async via Celery allows the API to return immediately with a run ID, while CI pipelines poll or stream results. This prevents HTTP timeouts and allows multiple concurrent evaluations."
+  },
+  {
+    "id": "q037",
+    "category": "architecture_design",
+    "question": "How does caching per-question scores by commit SHA improve EvalCI efficiency?",
+    "ground_truth": "If only the generator (LLM prompt) changes between commits but the retriever (embeddings, chunking) remains identical, questions with deterministic retrieval results do not need re-evaluation. Cache hit rate can be very high when commits change only a small part of the pipeline, reducing OpenAI API costs and eval latency significantly."
+  },
+  {
+    "id": "q038",
+    "category": "architecture_design",
+    "question": "Why does EvalCI use PostgreSQL instead of a simpler key-value store like Redis for persisting evaluation results?",
+    "ground_truth": "Evaluation results have complex relational structure: runs → per-question scores → category aggregates → fingerprint reports. PostgreSQL allows efficient JOIN queries for dashboard filtering, aggregation (GROUP BY category), and historical trend analysis. Redis would require manual denormalization and makes complex queries impractical."
+  },
+  {
+    "id": "q039",
+    "category": "architecture_design",
+    "question": "What is the purpose of the baseline_run_id in the EvalCI regression fingerprinting system?",
+    "ground_truth": "The baseline run provides the reference point for computing score deltas. Without a baseline, you can only report absolute scores but not know if they represent a regression. By comparing to a known-good baseline (typically the last successful main branch evaluation), EvalCI can detect statistically meaningful degradation."
+  },
+  {
+    "id": "q040",
+    "category": "architecture_design",
+    "question": "Why does the Regression Fingerprinter examine grounding and correctness together rather than either metric alone?",
+    "ground_truth": "Examining either metric alone leads to misdiagnosis. Low correctness alone could be retriever or generator. Comparing the two metrics allows attribution: if grounding stays high but correctness drops, the generator is at fault (ignoring good context). If both drop together, the retriever is more likely at fault (bad context leads to bad answers)."
+  },
+  {
+    "id": "q041",
+    "category": "code_understanding",
+    "question": "What does the `expire_on_commit=False` setting do in SQLAlchemy's session factory?",
+    "ground_truth": "By default, SQLAlchemy expires all attributes on committed objects, forcing a DB reload on next access (lazy load). Setting expire_on_commit=False prevents this, allowing async code to access object attributes after commit without triggering additional DB queries — essential in async SQLAlchemy where lazy loads raise errors."
+  },
+  {
+    "id": "q042",
+    "category": "code_understanding",
+    "question": "What does `bind=True` do in a Celery task decorator?",
+    "ground_truth": "bind=True makes the task a bound method, where the first argument (conventionally `self`) is the Celery task instance itself. This gives access to self.retry(), self.request.id (task ID), self.update_state() for progress reporting, and other Celery task methods."
+  },
+  {
+    "id": "q043",
+    "category": "code_understanding",
+    "question": "What is the purpose of `asynccontextmanager` in FastAPI's lifespan parameter?",
+    "ground_truth": "asynccontextmanager converts a generator function into an async context manager. FastAPI's lifespan parameter expects an async context manager: code before `yield` runs on startup, code after `yield` runs on shutdown. This is the modern replacement for @app.on_event('startup') / @app.on_event('shutdown')."
+  },
+  {
+    "id": "q044",
+    "category": "code_understanding",
+    "question": "Why should Celery workers use `task_acks_late=True` for long-running evaluation tasks?",
+    "ground_truth": "With the default acks_early=True, a task is acknowledged (removed from queue) as soon as the worker accepts it. If the worker crashes mid-execution, the task is lost. acks_late=True delays acknowledgement until the task completes, so a crashed worker returns the task to the queue for retry."
+  },
+  {
+    "id": "q045",
+    "category": "code_understanding",
+    "question": "What is the difference between `selectin` and `lazy` loading strategies in SQLAlchemy relationships?",
+    "ground_truth": "lazy='select' (default) issues a separate SQL query per object when the relationship is first accessed — problematic with async SQLAlchemy. lazy='selectin' issues a single IN-clause query to load all related objects for a result set in one round trip. This is the recommended strategy for async SQLAlchemy to avoid DetachedInstanceError."
+  },
+  {
+    "id": "q046",
+    "category": "ethical_safety",
+    "question": "What risks arise from using an LLM to evaluate another LLM's outputs (LLM-as-judge) in a RAG evaluation system?",
+    "ground_truth": "LLM-as-judge risks: 1. Position bias (prefers first-listed answers). 2. Verbosity bias (prefers longer answers). 3. Self-enhancement bias (same model family prefers its own outputs). 4. Inconsistency across runs. Ragas mitigates some of these by using structured prompts and averaging, and by combining multiple metrics rather than a single judge score."
+  },
+  {
+    "id": "q047",
+    "category": "ethical_safety",
+    "question": "How could a malicious commit deliberately game EvalCI scores without actually improving RAG quality?",
+    "ground_truth": "A commit could: 1. Overfit answers to the test_suite.json questions (memorising ground truths). 2. Strip punctuation or reformatting that inflates string-similarity metrics. 3. Inject ground truth text into system prompts. EvalCI mitigates this by keeping test_suite.json private (not committed to the repo) and using semantic metrics over string match."
+  },
+  {
+    "id": "q048",
+    "category": "ethical_safety",
+    "question": "What privacy concerns arise when logging full question-answer-context triplets in a production RAG evaluation system?",
+    "ground_truth": "Retrieved contexts may contain PII from production documents. Answers may include sensitive information. Storing these in PostgreSQL requires: data encryption at rest, access controls, retention policies, and potentially anonymisation or masking before storage. Evaluation logs should be treated with the same sensitivity as the source document corpus."
+  },
+  {
+    "id": "q049",
+    "category": "deployment",
+    "question": "What environment variables must be set before running EvalCI in production?",
+    "ground_truth": "Required: OPENAI_API_KEY (or ANTHROPIC_API_KEY), DATABASE_URL (PostgreSQL connection string), REDIS_URL (broker and cache), CHROMA_HOST + CHROMA_PORT (vector DB). Optional but recommended: PASS_THRESHOLD (score floor), CACHE_TTL_SECONDS, OPENAI_MODEL, RAG_TOP_K, CHUNK_SIZE."
+  },
+  {
+    "id": "q050",
+    "category": "deployment",
+    "question": "How should EvalCI be deployed so that evaluation does not block the CI pipeline when the test suite is large?",
+    "ground_truth": "Use async dispatching: the /evaluate endpoint enqueues the Celery task and returns immediately with a run_id. The CI step then polls GET /evaluate/{run_id}/status with a retry loop (e.g., every 30s, up to 20 minutes). This prevents GitHub Actions job timeout while allowing the eval to run independently."
+  }
+]

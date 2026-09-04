@@ -1,0 +1,51 @@
+Python Ecosystem and Key Libraries
+
+PYTHON LANGUAGE FUNDAMENTALS
+
+Python was created by Guido van Rossum and first released in 1991. It is a high-level, dynamically-typed, interpreted programming language known for its readability and broad ecosystem of libraries. Python 3.0 was released in 2008, breaking backward compatibility with Python 2 to fix fundamental design decisions. Python 3.12 was released in 2023.
+
+FASTAPI
+
+FastAPI is a modern, fast Python web framework for building APIs, created by Sebastián Ramírez and first released in 2018. It is built on top of Starlette for the web parts and Pydantic for data validation. FastAPI supports async/await natively, enabling high-throughput non-blocking I/O. It automatically generates OpenAPI documentation from type annotations.
+
+Key FastAPI concepts:
+- Routers: APIRouter objects group related endpoints and are registered on the main app.
+- Dependencies: The Depends() system injects shared resources (database sessions, authentication) into route handlers.
+- Lifespan: The @asynccontextmanager-decorated lifespan function replaces the deprecated on_event decorator for startup/shutdown hooks. Code before yield runs on startup; code after yield runs on shutdown.
+- Pydantic validation: Request bodies are automatically validated against Pydantic model schemas. Invalid requests return 422 Unprocessable Entity.
+
+SERVER-SENT EVENTS (SSE) IN FASTAPI
+
+Server-Sent Events allow a server to push data to a client over a long-lived HTTP connection. In FastAPI, SSE is implemented by returning a StreamingResponse with media_type="text/event-stream". The response body is an async generator that yields strings in the format "data: <json>\n\n". Heartbeat events (empty data or "type: ping") should be sent every 15-30 seconds to prevent proxy timeouts. The client uses the browser's EventSource API to receive events. Because nginx and AWS ALBs can buffer responses, the header "X-Accel-Buffering: no" should be added to SSE responses.
+
+SQLALCHEMY 2.0 (ASYNC)
+
+SQLAlchemy 2.0 introduced a fully asynchronous ORM using the asyncpg driver for PostgreSQL. Key patterns:
+- create_async_engine creates an async-compatible engine.
+- async_sessionmaker creates sessions that are used with async with.
+- expire_on_commit=False must be set in async sessions because lazy loading triggers a SQL query, which is not allowed outside a transaction in async mode.
+- Relationships should use lazy="selectin" to avoid DetachedInstanceError. Selectin loading issues a single IN-clause query for all related objects.
+- run_sync() is used to call synchronous SQLAlchemy operations (like create_all) from async context.
+
+CELERY AND REDIS
+
+Celery is a distributed task queue for Python. It allows functions to be executed asynchronously by worker processes. Key configuration:
+- The broker receives and queues tasks. Redis is the most common broker for development.
+- The result backend stores task results. Redis is also commonly used here.
+- bind=True in the task decorator makes the task a bound method with self referencing the task instance. self.retry() reschedules the task, self.request.id gets the task UUID, self.update_state() reports progress.
+- task_acks_late=True delays task acknowledgement until completion, preventing task loss if a worker crashes mid-execution.
+- worker_prefetch_multiplier=1 ensures each worker takes only one task at a time, appropriate for long-running evaluation tasks.
+- soft_time_limit raises a SoftTimeLimitExceeded exception, allowing graceful cleanup. time_limit forcibly kills the task process.
+
+PYDANTIC V2
+
+Pydantic v2 is a data validation library. Key features:
+- BaseModel: Base class for all validation schemas.
+- Field(): Add metadata (min_length, pattern, ge, le, default, description) to model attributes.
+- model_config: Configure model behavior (json_schema_extra for OpenAPI examples, from_attributes for ORM mode).
+- Enum fields: String enums are fully supported and serialise to their string values.
+- Optional fields use Optional[T] or T | None syntax.
+
+BOILING POINT AND SCIENTIFIC CONSTANTS
+
+The boiling point of water at standard atmospheric pressure (1 atm, 101.325 kPa) is 100 degrees Celsius (212 degrees Fahrenheit or 373.15 Kelvin). The speed of light in a vacuum is 299,792,458 metres per second (approximately 3 × 10^8 m/s). The chemical symbol for gold is Au, derived from the Latin word "Aurum." Albert Einstein published the theory of general relativity in 1915. The Berlin Wall fell on November 9, 1989.

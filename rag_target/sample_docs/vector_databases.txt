@@ -1,0 +1,58 @@
+Vector Databases, Embeddings, and Architectural Design Principles
+
+COSINE SIMILARITY AND VECTOR SEARCH
+
+Cosine similarity measures the cosine of the angle between two non-zero vectors in an inner product space. Values range from -1 (completely opposite) to 1 (identical direction), with 0 indicating orthogonality (unrelated). In information retrieval, embedding vectors for semantically similar texts cluster near 1.0. Cosine similarity is preferred over Euclidean distance for normalised embeddings because it is scale-invariant.
+
+CHROMADB vs PINECONE
+
+ChromaDB is open-source, runs locally or self-hosted, and is ideal for development and small-to-medium scale deployments. It supports multiple embedding functions, metadata filtering, and both in-memory (EphemeralClient) and persistent (HttpClient) storage. ChromaDB is free to use.
+
+Pinecone is a managed cloud vector database service with enterprise-grade scaling, replication, sub-10ms query latency at scale, and built-in metadata filtering. Pinecone charges based on vector count and query volume. It is preferred for high-throughput production environments where availability and performance SLAs are required.
+
+Weaviate is another open-source vector database that supports hybrid search (combining dense vector search with BM25 keyword search). It offers a GraphQL API and supports multi-tenancy.
+
+LLMS AS EVALUATORS (LLM-AS-JUDGE)
+
+Using an LLM to evaluate another LLM's outputs is called "LLM-as-judge." Ragas uses this approach for metrics like faithfulness and answer_correctness. Key risks include:
+- Position bias: The judge LLM may prefer the first option presented.
+- Verbosity bias: Longer answers are rated higher even if less accurate.
+- Self-enhancement bias: A model may rate outputs from its own model family higher.
+- Inconsistency: The same answer may receive different scores on different calls.
+
+Ragas mitigates these risks by using structured extraction prompts, decomposing evaluation into sub-tasks, and averaging scores across multiple metrics.
+
+SQLALCHEMY ORM CONCEPTS
+
+expire_on_commit=False: By default, SQLAlchemy expires all ORM attributes on committed objects, forcing a database reload on next access (lazy loading). In async SQLAlchemy, lazy loading raises DetachedInstanceError because it tries to issue a SQL query outside a transaction. Setting expire_on_commit=False prevents this, allowing attribute access without additional queries.
+
+selectin loading (lazy="selectin"): Issues a single SQL query with an IN clause to load all related objects for a result set. This is the recommended relationship loading strategy for async SQLAlchemy. In contrast, lazy="select" (the default) issues a separate query per object, which is not compatible with async mode.
+
+run_sync: In async SQLAlchemy, synchronous operations like Base.metadata.create_all() must be wrapped in conn.run_sync() to execute correctly within an async context.
+
+CELERY ADVANCED PATTERNS
+
+bind=True in the @celery_app.task decorator makes the task a bound method. The first argument (self) is the Celery task instance, which provides access to:
+- self.retry(exc=exception): Reschedule the task after a failure.
+- self.request.id: The UUID of the current task execution.
+- self.update_state(state="PROGRESS", meta={...}): Report intermediate progress to the result backend.
+
+task_acks_late=True: Delays task acknowledgement until task completion. Prevents task loss on worker crash. The task may be re-queued and re-executed if the worker dies mid-execution, so tasks should be idempotent.
+
+soft_time_limit raises SoftTimeLimitExceeded exception, allowing graceful cleanup code to run. time_limit forcibly kills the worker process after the hard limit.
+
+SYSTEM DESIGN PRINCIPLES
+
+Why PostgreSQL over Redis for result storage: PostgreSQL supports complex relational queries (JOIN, GROUP BY, aggregation) needed for the dashboard's history view and category-level analytics. It provides ACID guarantees for run record consistency. Redis cannot efficiently serve complex analytical queries and lacks durable relational structure.
+
+Why Redis for caching and pub/sub: Redis excels at ephemeral, high-throughput operations. Score caching requires fast key-value lookups by composite key (question_id + commit_sha). Pub/sub requires millisecond-latency message delivery for SSE streaming. Redis's pub/sub model is the simplest pattern for fan-out to multiple dashboard clients subscribed to the same run.
+
+Why async over sync: FastAPI's async model allows a single worker process to handle many concurrent requests (SSE streams, API polls, new triggers) without blocking. Synchronous DB or Redis calls would block the event loop, degrading performance under concurrent load. Using asyncpg and redis.asyncio ensures all I/O operations are non-blocking.
+
+ETHICS AND SAFETY IN EVALUATION SYSTEMS
+
+Privacy risks: Retrieved contexts and generated answers in evaluation logs may contain personally identifiable information (PII) from production documents. EvalCI stores full question-answer-context triplets in PostgreSQL; this data should be encrypted at rest, access-controlled, and subject to data retention policies. Evaluation logs should be treated with the same sensitivity as the source document corpus.
+
+Gaming the evaluation: A malicious or careless developer could overfit the RAG system to the test suite (e.g. memorising ground-truth answers, injecting test answers into the system prompt). EvalCI mitigates this by keeping test_suite.json private (not committed to the public repo) and using semantic similarity metrics rather than exact string matching.
+
+Contextual precision and recall tradeoffs: In high-stakes domains (medical, legal, financial), maximising recall (retrieve all potentially relevant chunks) may be preferred over precision. EvalCI's category-level thresholds can be configured separately per category to reflect domain-specific risk tolerance.

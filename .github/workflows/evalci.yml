@@ -1,0 +1,235 @@
+# evalci/.github/workflows/evalci.yml
+# GitHub Actions CI workflow — trigger EvalCI on push/PR, quality gate on regression.
+
+name: EvalCI — RAG Regression Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: evalci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  EVALCI_API_URL: ${{ secrets.EVALCI_API_URL }}
+
+jobs:
+  # ── 1. Trigger evaluation ──────────────────────────
+  trigger-eval:
+    name: Trigger EvalCI Evaluation
+    runs-on: ubuntu-latest
+    outputs:
+      run_id: ${{ steps.trigger.outputs.run_id }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: POST /evaluate
+        id: trigger
+        run: |
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -X POST "${EVALCI_API_URL}/evaluate/" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"commit_sha\": \"${{ github.sha }}\",
+              \"branch\": \"${{ github.ref_name }}\",
+              \"triggered_by\": \"github-actions\"
+            }")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -1)
+          if [ "$HTTP_CODE" -ne 202 ]; then
+            echo "Error triggering evaluation: $BODY"
+            exit 1
+          fi
+          RUN_ID=$(echo "$BODY" | python3 -c "import sys,json; print(json.load(sys.stdin)['run_id'])")
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "✅ Triggered evaluation run_id=$RUN_ID"
+
+  # ── 2. Poll for completion ─────────────────────────
+  poll-completion:
+    name: Poll for Evaluation Completion
+    runs-on: ubuntu-latest
+    needs: trigger-eval
+
+    steps:
+      - name: Poll status (up to 20 minutes)
+        env:
+          RUN_ID: ${{ needs.trigger-eval.outputs.run_id }}
+        run: |
+          MAX_ATTEMPTS=40   # 40 × 30s = 20 minutes
+          ATTEMPT=0
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            RESPONSE=$(curl -s "${EVALCI_API_URL}/evaluate/${RUN_ID}/status")
+            STATUS=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
+            PCT=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('progress_pct') or 0)")
+            echo "  [${ATTEMPT}/${MAX_ATTEMPTS}] Status=${STATUS}  Progress=${PCT}%"
+            if [ "$STATUS" = "COMPLETE" ]; then
+              echo "✅ Evaluation complete."
+              exit 0
+            elif [ "$STATUS" = "FAILED" ]; then
+              ERR=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error_message','unknown'))")
+              echo "❌ Evaluation FAILED: $ERR"
+              exit 1
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            sleep 30
+          done
+          echo "⏱️ Timed out waiting for evaluation."
+          exit 1
+
+  # ── 3. Fetch results + fingerprint ────────────────
+  fetch-results:
+    name: Fetch Results and Fingerprint
+    runs-on: ubuntu-latest
+    needs: [trigger-eval, poll-completion]
+
+    steps:
+      - name: Download full results
+        env:
+          RUN_ID: ${{ needs.trigger-eval.outputs.run_id }}
+        run: |
+          curl -s "${EVALCI_API_URL}/results/${RUN_ID}" \
+            -o eval_results.json
+          echo "Saved eval_results.json"
+          python3 -c "
+          import json
+          with open('eval_results.json') as f:
+              d = json.load(f)
+          score = d.get('overall_score', 0)
+          passed = d.get('passed', False)
+          print(f'Overall score: {score:.1%}  Passed: {passed}')
+          "
+
+      - name: Download fingerprint report (if available)
+        env:
+          RUN_ID: ${{ needs.trigger-eval.outputs.run_id }}
+        run: |
+          HTTP_CODE=$(curl -s -o fingerprint_report.json -w "%{http_code}" \
+            "${EVALCI_API_URL}/results/${RUN_ID}/fingerprint")
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "🔍 Fingerprint report downloaded."
+            python3 -c "
+          import json
+          with open('fingerprint_report.json') as f:
+              fp = json.load(f)
+          print('Top failing component:', fp.get('top_failing_component'))
+          print('Regressed categories:', len(fp.get('regressions', [])))
+            "
+          else
+            echo "ℹ️  No regression fingerprint for this run (HTTP $HTTP_CODE)."
+            echo '{}' > fingerprint_report.json
+          fi
+
+      - name: Upload evaluation artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: evalci-results-${{ github.sha }}
+          path: |
+            eval_results.json
+            fingerprint_report.json
+          retention-days: 90
+
+  # ── 4. Quality gate ────────────────────────────────
+  quality-gate:
+    name: Quality Gate
+    runs-on: ubuntu-latest
+    needs: fetch-results
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: evalci-results-${{ github.sha }}
+
+      - name: Check for HIGH-severity regressions
+        id: gate
+        run: |
+          python3 - << 'EOF'
+          import json, sys
+
+          with open('fingerprint_report.json') as f:
+              fp = json.load(f)
+
+          if not fp.get('overall_regressed'):
+              print("✅ No regressions detected. Quality gate passed.")
+              sys.exit(0)
+
+          regressions = fp.get('regressions', [])
+          high = [r for r in regressions if r.get('severity') == 'HIGH']
+
+          print(f"⚠️  {len(regressions)} regression(s) detected.")
+          for r in regressions:
+              sev = r.get('severity', '?')
+              cat = r.get('category', '?')
+              delta = r.get('delta', 0)
+              comp = r.get('attributed_to', '?')
+              print(f"  [{sev}] {cat}: delta={delta:+.3f}  → {comp}")
+
+          if high:
+              print(f"\n❌ {len(high)} HIGH-severity regression(s) found. Failing CI.")
+              sys.exit(1)
+          else:
+              print("\n✅ No HIGH-severity regressions. Quality gate passed (MEDIUM/LOW regressions noted).")
+          EOF
+
+      - name: Post fingerprint comment to PR
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          python3 - << 'EOF'
+          import json, subprocess, os
+
+          with open('fingerprint_report.json') as f:
+              fp = json.load(f)
+          with open('eval_results.json') as f:
+              results = json.load(f)
+
+          score = results.get('overall_score', 0)
+          passed_overall = results.get('passed', False)
+          overall_regressed = fp.get('overall_regressed', False)
+
+          icon = "✅" if passed_overall else "❌"
+          lines = [
+              f"## {icon} EvalCI Regression Report",
+              f"",
+              f"**Overall Score:** `{score:.1%}` {'✓ PASSED' if passed_overall else '✗ FAILED'}",
+          ]
+
+          if overall_regressed:
+              comp = fp.get('top_failing_component', 'UNKNOWN')
+              lines += [
+                  f"**Regression Detected** — Top failing component: **{comp}**",
+                  f"",
+                  f"| Category | Severity | Δ Score | Component |",
+                  f"|----------|----------|---------|-----------|",
+              ]
+              for r in fp.get('regressions', []):
+                  lines.append(
+                      f"| {r['category']} | {r['severity']} | {r['delta']:+.3f} | {r['attributed_to']} |"
+                  )
+              lines += ["", f"**Summary:** {fp.get('summary', '')}", ""]
+              actions = fp.get('action_items', [])
+              if actions:
+                  lines.append("**Action Items:**")
+                  for a in actions[:5]:
+                      lines.append(f"- {a}")
+          else:
+              lines.append("No regressions detected compared to baseline. 🎉")
+
+          body = "\n".join(lines)
+          pr = os.environ['PR_NUMBER']
+          result = subprocess.run(
+              ['gh', 'pr', 'comment', pr, '--body', body],
+              capture_output=True, text=True
+          )
+          if result.returncode != 0:
+              print("Warning: could not post PR comment:", result.stderr)
+          else:
+              print("PR comment posted.")
+          EOF

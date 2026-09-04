@@ -1,0 +1,91 @@
+# evalci/docker-compose.yml
+# Purpose: Local development environment setup for EvalCI infrastructure.
+# Spins up PostgreSQL (database), Redis (broker + cache), ChromaDB (vector DB),
+# and a Flower instance (Celery monitoring UI).
+# The EvalCI FastAPI application and Celery workers are run separately via
+# `uvicorn` and `celery` commands during development.
+
+version: "3.9"
+
+services:
+
+  # ──────────────────────────────────────────────────────────────
+  # PostgreSQL — primary database for run records, scores, fingerprints
+  # ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: evalci_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: evalci
+      POSTGRES_PASSWORD: evalci
+      POSTGRES_DB: evalci
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evalci"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ──────────────────────────────────────────────────────────────
+  # Redis — Celery broker + result backend + score cache + SSE pub/sub
+  # ──────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: evalci_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ──────────────────────────────────────────────────────────────
+  # ChromaDB — vector database for RAG document retrieval
+  # ──────────────────────────────────────────────────────────────
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: evalci_chromadb
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      IS_PERSISTENT: "TRUE"
+      PERSIST_DIRECTORY: /chroma/chroma
+      ANONYMIZED_TELEMETRY: "FALSE"
+    volumes:
+      - chroma_data:/chroma/chroma
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # ──────────────────────────────────────────────────────────────
+  # Flower — Celery task monitoring web UI (development convenience)
+  # ──────────────────────────────────────────────────────────────
+  flower:
+    image: mher/flower:2.0
+    container_name: evalci_flower
+    restart: unless-stopped
+    command: celery flower --broker=redis://redis:6379/0 --port=5555
+    ports:
+      - "5555:5555"
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+
+volumes:
+  postgres_data:
+  redis_data:
+  chroma_data:

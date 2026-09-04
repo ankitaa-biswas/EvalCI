@@ -1,0 +1,65 @@
+# evalci/requirements.txt
+# Purpose: All Python dependencies for the EvalCI project.
+# Pin major versions for reproducibility; minor versions left flexible.
+# Install with: pip install -r requirements.txt
+
+# ──────────────────────────────────────────────────────────────
+# Web framework & server
+# ──────────────────────────────────────────────────────────────
+fastapi>=0.111.0,<0.112.0
+uvicorn[standard]>=0.29.0,<0.30.0
+python-multipart>=0.0.9         # Required for FastAPI file uploads (future use)
+
+# ──────────────────────────────────────────────────────────────
+# Database
+# ──────────────────────────────────────────────────────────────
+sqlalchemy>=2.0.0,<3.0.0
+asyncpg>=0.29.0,<0.30.0         # Async PostgreSQL driver for SQLAlchemy
+alembic>=1.13.0,<2.0.0          # Database migrations (Cycle 3)
+psycopg2-binary>=2.9.0          # Sync driver (needed by Alembic)
+
+# ──────────────────────────────────────────────────────────────
+# Task queue
+# ──────────────────────────────────────────────────────────────
+celery>=5.3.0,<6.0.0
+redis>=5.0.0,<6.0.0             # Celery broker + cache client
+redis[asyncio]>=5.0.0           # Async Redis (for SSE pub/sub)
+
+# ──────────────────────────────────────────────────────────────
+# Evaluation — Ragas + LLM clients
+# ──────────────────────────────────────────────────────────────
+ragas>=0.1.9,<0.2.0
+datasets>=2.18.0                # HuggingFace datasets (Ragas dependency)
+langchain>=0.2.0,<0.3.0
+langchain-google-genai>=1.0.0  # Gemini LLM + embeddings via LangChain
+langchain-anthropic>=0.1.0      # Claude API via LangChain (optional)
+
+# ──────────────────────────────────────────────────────────────
+# Vector database
+# ──────────────────────────────────────────────────────────────
+chromadb>=0.5.0,<0.6.0
+
+# ──────────────────────────────────────────────────────────────
+# HTTP client (for querying external RAG endpoints)
+# ──────────────────────────────────────────────────────────────
+httpx>=0.27.0,<0.28.0
+
+# ──────────────────────────────────────────────────────────────
+# Data validation
+# ──────────────────────────────────────────────────────────────
+pydantic>=2.7.0,<3.0.0
+pydantic-settings>=2.2.0        # Settings management from .env files
+
+# ──────────────────────────────────────────────────────────────
+# Utilities
+# ──────────────────────────────────────────────────────────────
+python-dotenv>=1.0.0            # Load .env file in development
+tenacity>=8.3.0                 # Retry logic for LLM and DB calls (Cycle 2)
+
+# ──────────────────────────────────────────────────────────────
+# Development & testing (Cycle 4)
+# ──────────────────────────────────────────────────────────────
+pytest>=8.1.0
+pytest-asyncio>=0.23.0
+httpx                           # Also used as ASGI test client
+factory-boy>=3.3.0              # Test fixture factories

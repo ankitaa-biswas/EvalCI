@@ -1,0 +1,63 @@
+Troubleshooting Guide and Deployment Operations
+
+COMMON RAG SYSTEM FAILURES AND DIAGNOSTICS
+
+SYMPTOM: High faithfulness but low correctness
+DIAGNOSIS: GENERATOR failure. The retriever is correctly fetching relevant chunks (grounding is high), but the LLM is generating incorrect answers. Possible causes: model version change, high sampling temperature, adversarial prompt injection in documents, or the LLM using its parametric knowledge to override the provided context.
+SOLUTION: Review prompt template changes in the current commit. Reduce LLM temperature. Try a more instruction-following model variant.
+
+SYMPTOM: Low faithfulness and low correctness
+DIAGNOSIS: RETRIEVER failure. The retriever is not fetching relevant chunks, so the generator has nothing to ground its answer on. Possible causes: embedding model drift, stale ChromaDB index, chunk size too large fragmenting relevant content, top-k too low.
+SOLUTION: Verify ChromaDB collection was re-indexed after document changes. Check embedding model version. Inspect retrieved chunks manually for a failing question. Increase top-k and re-run.
+
+SYMPTOM: Context recall drops to near zero after adding new documents
+DIAGNOSIS: The new documents may not have been indexed. Alternatively, the ingestion script failed silently (empty chunks, encoding errors), or the embedding model changed causing incompatible vector representations.
+SOLUTION: Run python -m rag_target.ingest --reset to force full re-indexing. Check ingestion logs for warnings. Verify OPENAI_API_KEY is valid.
+
+SYMPTOM: Celery task never completes
+DIAGNOSIS: Check worker logs for unhandled exceptions, time limit violations (soft/hard), or deadlocks. Verify Redis broker is reachable from the worker. Check task_acks_late and worker_prefetch_multiplier settings. An async function called synchronously inside a Celery task can cause event loop blocking.
+SOLUTION: Use celery -A core.queue.celery_app flower or the Flower web UI at localhost:5555 to inspect task state. Check redis-cli monitor for broker activity.
+
+SYMPTOM: SSE events stop after 30 seconds
+DIAGNOSIS: A proxy (nginx, AWS ALB, Cloudflare) is closing the idle connection. The SSE generator is not sending heartbeat events frequently enough.
+SOLUTION: Ensure the SSE generator yields a ping event every 15 seconds. Add the X-Accel-Buffering: no header to the SSE response to disable nginx buffering. Set ALB idle timeout to 300+ seconds.
+
+SYMPTOM: FastAPI returns 422 on POST to /evaluate from GitHub Actions
+DIAGNOSIS: The request body does not match the EvalRunRequest Pydantic schema. Common causes: commit_sha is not exactly 40 lowercase hexadecimal characters, branch is empty, or the Content-Type header is missing.
+SOLUTION: Validate the CURL command payload against the schema. Use GitHub Actions expression ${{ github.sha }} for the commit SHA. Ensure the content-type header is set: -H "Content-Type: application/json".
+
+DEPLOYMENT CHECKLIST
+
+Before running EvalCI in production:
+1. Set all required environment variables: OPENAI_API_KEY, DATABASE_URL, REDIS_URL, CHROMA_HOST, CHROMA_PORT.
+2. Run docker compose up -d to start PostgreSQL, Redis, and ChromaDB.
+3. Run python -m rag_target.ingest to populate the vector store.
+4. Start the Uvicorn server: uvicorn api.main:app --host 0.0.0.0 --port 8080.
+5. Start at least one Celery worker: celery -A core.queue.celery_app worker --loglevel=info --concurrency=2.
+6. Verify infrastructure: curl http://localhost:8080/health should return 200.
+7. Add EVALCI_API_URL and EVALCI_API_KEY secrets to GitHub repository settings.
+8. Set the evalci workflow as a required status check in branch protection rules.
+
+GITHUB ACTIONS CONFIGURATION
+
+The EvalCI workflow requires two repository secrets:
+- EVALCI_API_URL: The base URL of the deployed EvalCI API (e.g., https://evalci.example.com).
+- EVALCI_API_KEY: A bearer token for API authentication.
+
+The workflow uses concurrency groups to cancel in-progress evaluations when a new push arrives on the same branch. This prevents stale evaluation results from blocking newer commits.
+
+Evaluation artifacts (eval_results.json, fingerprint_report.json) are retained for 90 days and can be downloaded from the GitHub Actions run summary page.
+
+TRANSFORMER ARCHITECTURE
+
+A transformer is a deep learning architecture introduced in the paper "Attention Is All You Need" (Vaswani et al., 2017). It relies on self-attention mechanisms to process sequential data in parallel, enabling far more efficient training than recurrent neural networks (RNNs). The key innovation is the multi-head self-attention layer, which allows each token to attend to every other token in the sequence simultaneously. Transformers are the architectural basis for BERT, GPT, T5, and virtually all modern large language models.
+
+ACID DATABASE PROPERTIES
+
+ACID stands for Atomicity, Consistency, Isolation, and Durability. These are the four properties that guarantee reliable database transaction processing:
+- Atomicity: A transaction either completes fully or does not execute at all. No partial updates.
+- Consistency: A transaction brings the database from one valid state to another, respecting all constraints.
+- Isolation: Concurrent transactions execute as if they were sequential, preventing dirty reads and phantom reads.
+- Durability: Once a transaction is committed, it remains committed even in the event of a system failure.
+
+PostgreSQL is a fully ACID-compliant relational database. SQLAlchemy manages transactions automatically within session scope.

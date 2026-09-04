@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EvalCI — RAG Regression Dashboard</title>
+  <meta name="description" content="Real-time evaluation and regression testing dashboard for RAG systems. Monitor scores, fingerprint regressions, and track failure clusters." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ── CSS Variables ─────────────────────────────────────────── */
+    :root {
+      --bg:           #090b13;
+      --bg-card:      #111420;
+      --bg-card2:     #181b28;
+      --bg-card3:     #1e2235;
+      --border:       rgba(255,255,255,0.07);
+      --border-hover: rgba(99,102,241,0.35);
+      --accent:       #6366f1;
+      --accent2:      #818cf8;
+      --accent3:      #4f46e5;
+      --green:        #22c55e;
+      --green-dim:    rgba(34,197,94,0.15);
+      --yellow:       #f59e0b;
+      --yellow-dim:   rgba(245,158,11,0.15);
+      --red:          #ef4444;
+      --red-dim:      rgba(239,68,68,0.15);
+      --blue:         #3b82f6;
+      --blue-dim:     rgba(59,130,246,0.15);
+      --purple:       #a855f7;
+      --muted:        #4b5577;
+      --muted2:       #64748b;
+      --text:         #e2e8f0;
+      --text-dim:     #94a3b8;
+      --font:         'Inter', system-ui, sans-serif;
+      --mono:         'JetBrains Mono', 'Fira Code', monospace;
+      --radius:       12px;
+      --radius-sm:    8px;
+      --shadow:       0 4px 24px rgba(0,0,0,0.4);
+    }
+
+    /* ── Reset ──────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+    a { text-decoration: none; color: inherit; }
+    button { font-family: var(--font); cursor: pointer; }
+
+    /* ── Scrollbar ──────────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--bg-card3); border-radius: 4px; }
+
+    /* ── Header ─────────────────────────────────────────────────── */
+    header {
+      position: sticky; top: 0; z-index: 100;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0.9rem 2rem;
+      background: rgba(9,11,19,0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+    .logo {
+      display: flex; align-items: center; gap: 0.6rem;
+    }
+    .logo-icon {
+      font-size: 1.5rem;
+      filter: drop-shadow(0 0 8px rgba(99,102,241,0.6));
+    }
+    .logo-text {
+      font-size: 1.2rem; font-weight: 700; letter-spacing: -0.03em;
+      background: linear-gradient(135deg, var(--accent2), var(--purple));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .logo-tag {
+      font-size: 0.68rem; color: var(--muted2); font-weight: 400;
+      padding: 0.15rem 0.5rem;
+      background: var(--bg-card2);
+      border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+    .header-actions { display: flex; align-items: center; gap: 0.8rem; }
+    #api-status {
+      font-size: 0.72rem; font-weight: 600;
+      padding: 0.3rem 0.8rem;
+      border-radius: 999px;
+      border: 1px solid currentColor;
+    }
+    .api-ok   { color: var(--green); }
+    .api-err  { color: var(--red); }
+    .api-pend { color: var(--muted2); }
+
+    /* ── Layout ──────────────────────────────────────────────────── */
+    .page-body {
+      max-width: 1600px;
+      margin: 0 auto;
+      padding: 1.5rem 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    /* ── Card ────────────────────────────────────────────────────── */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem 1.5rem;
+      transition: border-color 0.2s;
+    }
+    .card:hover { border-color: rgba(99,102,241,0.2); }
+    .card-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 1rem;
+    }
+    .card-title {
+      font-size: 0.72rem; font-weight: 700;
+      color: var(--muted2);
+      text-transform: uppercase; letter-spacing: 0.1em;
+    }
+
+    /* ── Status Badge ────────────────────────────────────────────── */
+    .badge {
+      display: inline-flex; align-items: center; gap: 0.3rem;
+      padding: 0.2rem 0.65rem;
+      border-radius: 999px;
+      font-size: 0.7rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .badge-dot { width: 6px; height: 6px; border-radius: 50%; }
+    .badge-pending  { background: rgba(100,116,139,0.15); color: var(--muted2); }
+    .badge-pending  .badge-dot { background: var(--muted2); }
+    .badge-running  { background: var(--blue-dim);   color: var(--blue); }
+    .badge-running  .badge-dot { background: var(--blue); animation: pulse 1.2s infinite; }
+    .badge-complete { background: var(--green-dim);  color: var(--green); }
+    .badge-complete .badge-dot { background: var(--green); }
+    .badge-failed   { background: var(--red-dim);    color: var(--red); }
+    .badge-failed   .badge-dot { background: var(--red); }
+
+    /* Failure type badges */
+    .failure-retriever { background: rgba(239,68,68,0.15);  color: #f87171; }
+    .failure-generator { background: rgba(245,158,11,0.15); color: #fbbf24; }
+    .failure-prompt    { background: rgba(99,102,241,0.15); color: var(--accent2); }
+    .failure-kb        { background: rgba(168,85,247,0.15); color: var(--purple); }
+
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+    /* ── Section 1 — Run Feed ────────────────────────────────────── */
+    #section-runs .card-header { margin-bottom: 0.75rem; }
+    #run-table-wrap { overflow-x: auto; }
+    #run-table {
+      width: 100%; border-collapse: collapse;
+      font-size: 0.8rem;
+    }
+    #run-table th {
+      text-align: left;
+      padding: 0.5rem 1rem;
+      font-size: 0.68rem; font-weight: 700;
+      color: var(--muted2);
+      text-transform: uppercase; letter-spacing: 0.08em;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    #run-table td {
+      padding: 0.7rem 1rem;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      vertical-align: middle;
+    }
+    #run-table tbody tr {
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    #run-table tbody tr:hover { background: var(--bg-card2); }
+    #run-table tbody tr.selected { background: rgba(99,102,241,0.1); border-left: 3px solid var(--accent); }
+    .sha {
+      font-family: var(--mono); font-size: 0.73rem;
+      color: var(--accent2);
+      background: rgba(99,102,241,0.1);
+      padding: 0.15rem 0.5rem; border-radius: 4px;
+    }
+    .branch-tag {
+      font-size: 0.72rem; color: var(--text-dim);
+      background: var(--bg-card2);
+      padding: 0.15rem 0.5rem; border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+    .severity-cell {
+      font-family: var(--mono); font-size: 0.78rem; font-weight: 600;
+    }
+    .severity-high   { color: var(--red); }
+    .severity-medium { color: var(--yellow); }
+    .severity-low    { color: var(--green); }
+    .severity-none   { color: var(--muted2); }
+    .ts-cell { font-size: 0.72rem; color: var(--muted2); white-space: nowrap; }
+
+    #run-empty {
+      text-align: center; padding: 2.5rem;
+      color: var(--muted2); font-size: 0.85rem;
+    }
+    #run-refresh-btn {
+      font-size: 0.75rem; color: var(--accent2);
+      background: rgba(99,102,241,0.1);
+      border: 1px solid rgba(99,102,241,0.25);
+      border-radius: var(--radius-sm);
+      padding: 0.3rem 0.75rem;
+      transition: background 0.2s;
+    }
+    #run-refresh-btn:hover { background: rgba(99,102,241,0.2); }
+
+    /* ── Middle row — 3 columns ──────────────────────────────────── */
+    .middle-row {
+      display: grid;
+      grid-template-columns: 280px 1fr 260px;
+      gap: 1.2rem;
+      align-items: start;
+    }
+    @media (max-width: 1100px) { .middle-row { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 700px)  { .middle-row { grid-template-columns: 1fr; } }
+
+    /* ── Section 2 — Fingerprint Panel (left) ───────────────────── */
+    #section-fp { min-width: 0; }
+    #fp-placeholder {
+      color: var(--muted2); font-size: 0.82rem; text-align: center;
+      padding: 2rem 1rem; line-height: 1.8;
+    }
+
+    /* Attribution bar chart */
+    .attr-bar-group { display: flex; flex-direction: column; gap: 0.55rem; margin: 0.75rem 0; }
+    .attr-row { display: flex; flex-direction: column; gap: 0.2rem; }
+    .attr-label-row {
+      display: flex; justify-content: space-between;
+      font-size: 0.72rem;
+    }
+    .attr-label { color: var(--text-dim); text-transform: capitalize; }
+    .attr-pct   { font-family: var(--mono); font-weight: 600; color: var(--text); }
+    .attr-track {
+      height: 7px; border-radius: 4px;
+      background: var(--bg-card3);
+      overflow: hidden;
+    }
+    .attr-fill {
+      height: 100%; border-radius: 4px;
+      transition: width 0.7s cubic-bezier(0.4,0,0.2,1);
+    }
+    .fill-retriever { background: linear-gradient(90deg, #ef4444, #f87171); }
+    .fill-generator { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+    .fill-prompt    { background: linear-gradient(90deg, var(--accent3), var(--accent2)); }
+    .fill-kb        { background: linear-gradient(90deg, #7c3aed, #a855f7); }
+
+    .fp-meta {
+      display: flex; flex-wrap: wrap; gap: 0.5rem;
+      margin-top: 0.75rem;
+    }
+    .fp-meta-item {
+      background: var(--bg-card2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 0.4rem 0.75rem;
+      font-size: 0.72rem;
+    }
+    .fp-meta-label { color: var(--muted2); display: block; }
+    .fp-meta-value { font-weight: 600; color: var(--text); font-family: var(--mono); }
+    .confidence-high   { color: var(--green); }
+    .confidence-medium { color: var(--yellow); }
+    .confidence-low    { color: var(--red); }
+
+    /* ── Section 3 — Heatmap (center) ───────────────────────────── */
+    #section-heatmap { min-width: 0; overflow-x: auto; }
+    #heatmap-placeholder {
+      color: var(--muted2); font-size: 0.82rem;
+      text-align: center; padding: 2.5rem 1rem;
+    }
+    #heatmap-table {
+      width: 100%; border-collapse: separate; border-spacing: 3px;
+      font-size: 0.75rem;
+    }
+    #heatmap-table th {
+      padding: 0.4rem 0.6rem;
+      font-size: 0.65rem; font-weight: 700;
+      color: var(--muted2);
+      text-transform: uppercase; letter-spacing: 0.06em;
+      text-align: center; white-space: nowrap;
+    }
+    #heatmap-table th:first-child { text-align: left; }
+    #heatmap-table td {
+      padding: 0.55rem 0.5rem;
+      text-align: center;
+      border-radius: 6px;
+      font-family: var(--mono); font-size: 0.75rem; font-weight: 600;
+      transition: transform 0.15s;
+    }
+    #heatmap-table td:first-child {
+      text-align: left;
+      font-family: var(--font); font-weight: 500;
+      color: var(--text-dim); font-size: 0.78rem;
+      background: transparent !important;
+      padding-right: 0.75rem;
+    }
+    #heatmap-table td:hover { transform: scale(1.06); z-index: 1; position: relative; }
+    .hm-green  { background: rgba(34,197,94,0.22);  color: #4ade80; }
+    .hm-yellow { background: rgba(245,158,11,0.22); color: #fbbf24; }
+    .hm-red    { background: rgba(239,68,68,0.22);  color: #f87171; }
+    .hm-delta  { display: block; font-size: 0.6rem; font-weight: 400; opacity: 0.75; margin-top: 1px; }
+    .delta-pos { color: #4ade80; }
+    .delta-neg { color: #f87171; }
+
+    /* ── Section 4 — Clusters (right) ───────────────────────────── */
+    #section-clusters { min-width: 0; }
+    #clusters-list {
+      display: flex; flex-direction: column; gap: 0.65rem;
+      max-height: 520px; overflow-y: auto;
+    }
+    #clusters-placeholder {
+      color: var(--muted2); font-size: 0.82rem;
+      text-align: center; padding: 2rem 1rem;
+    }
+    .cluster-card {
+      background: var(--bg-card2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 0.85rem 1rem;
+      transition: border-color 0.2s, transform 0.2s;
+    }
+    .cluster-card:hover { border-color: var(--border-hover); transform: translateX(3px); }
+    .cluster-top {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      gap: 0.5rem; margin-bottom: 0.5rem;
+    }
+    .cluster-label {
+      font-size: 0.83rem; font-weight: 600; line-height: 1.3;
+      color: var(--text);
+    }
+    .cluster-size {
+      font-size: 0.68rem; font-weight: 700;
+      background: rgba(99,102,241,0.15); color: var(--accent2);
+      padding: 0.15rem 0.5rem; border-radius: 999px;
+      white-space: nowrap; flex-shrink: 0;
+    }
+    .cluster-bottom {
+      display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+    }
+    .cluster-failure-label { font-size: 0.68rem; color: var(--muted2); }
+
+    /* ── Loading spinner ─────────────────────────────────────────── */
+    .spinner {
+      display: inline-block; width: 16px; height: 16px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Toast ───────────────────────────────────────────────────── */
+    #toast {
+      position: fixed; bottom: 1.5rem; right: 1.5rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 0.75rem 1.1rem;
+      font-size: 0.82rem;
+      color: var(--text);
+      box-shadow: var(--shadow);
+      opacity: 0; pointer-events: none;
+      transform: translateY(8px);
+      transition: opacity 0.25s, transform 0.25s;
+      z-index: 200;
+      max-width: 340px;
+    }
+    #toast.show { opacity: 1; pointer-events: auto; transform: none; }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════ HEADER ═══════════════ -->
+<header>
+  <div class="logo">
+    <span class="logo-icon">⚡</span>
+    <span class="logo-text">EvalCI</span>
+    <span class="logo-tag">RAG Regression Testing</span>
+  </div>
+  <div class="header-actions">
+    <span id="api-status" class="api-pend">● Connecting…</span>
+  </div>
+</header>
+
+<!-- ═══════════════ PAGE BODY ═══════════════ -->
+<div class="page-body">
+
+  <!-- ── Section 1: Run Feed ────────────────────────────── -->
+  <section id="section-runs" class="card">
+    <div class="card-header">
+      <span class="card-title">Evaluation Runs</span>
+      <button id="run-refresh-btn" onclick="loadRuns()">↻ Refresh</button>
+    </div>
+    <div id="run-table-wrap">
+      <table id="run-table" aria-label="Evaluation runs">
+        <thead>
+          <tr>
+            <th>Commit SHA</th>
+            <th>Branch</th>
+            <th>Status</th>
+            <th>Severity</th>
+            <th>Created At</th>
+          </tr>
+        </thead>
+        <tbody id="run-tbody">
+          <tr><td colspan="5" id="run-empty">
+            <span class="spinner"></span> Loading runs…
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Middle Row: Fingerprint | Heatmap | Clusters ──── -->
+  <div class="middle-row">
+
+    <!-- Section 2: Fingerprint Panel (left) -->
+    <section id="section-fp" class="card">
+      <div class="card-header">
+        <span class="card-title">🔍 Regression Fingerprint</span>
+      </div>
+      <div id="fp-content">
+        <div id="fp-placeholder">
+          Select a run above<br>to view its fingerprint.
+        </div>
+      </div>
+    </section>
+
+    <!-- Section 3: Heatmap (center) -->
+    <section id="section-heatmap" class="card">
+      <div class="card-header">
+        <span class="card-title">Score Heatmap</span>
+        <span id="heatmap-run-label" style="font-size:0.7rem;color:var(--muted2);"></span>
+      </div>
+      <div id="heatmap-content">
+        <div id="heatmap-placeholder">Select a run above to view the heatmap.</div>
+      </div>
+    </section>
+
+    <!-- Section 4: Clusters (right) -->
+    <section id="section-clusters" class="card">
+      <div class="card-header">
+        <span class="card-title">Failure Clusters</span>
+        <span id="clusters-count" style="font-size:0.7rem;color:var(--muted2);"></span>
+      </div>
+      <div id="clusters-list">
+        <div id="clusters-placeholder">Select a run above to view failure clusters.</div>
+      </div>
+    </section>
+
+  </div><!-- end .middle-row -->
+
+</div><!-- end .page-body -->
+
+<!-- Toast notification -->
+<div id="toast" role="status" aria-live="polite"></div>
+
+<!-- ═══════════════ SCRIPTS ═══════════════ -->
+<script>
+'use strict';
+
+/* ─────────────────────────────────────────────────
+   Config
+───────────────────────────────────────────────── */
+const API_BASE = '';   // same origin — FastAPI serves /runs, /fingerprints, /clusters
+
+/* ─────────────────────────────────────────────────
+   Utility helpers
+───────────────────────────────────────────────── */
+function toast(msg, durationMs = 3000) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), durationMs);
+}
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString(undefined, {
+    month: 'short', day: '2-digit',
+    hour: '2-digit', minute: '2-digit',
+  });
+}
+
+function fmtScore(val) {
+  if (val == null) return '—';
+  return (val * 100).toFixed(1) + '%';
+}
+
+function fmtSeverity(val) {
+  if (val == null) return { text: '—', cls: 'severity-none' };
+  const n = Number(val);
+  if (n > 7) return { text: n.toFixed(1), cls: 'severity-high' };
+  if (n > 4) return { text: n.toFixed(1), cls: 'severity-medium' };
+  return { text: n.toFixed(1), cls: 'severity-low' };
+}
+
+function statusBadge(status) {
+  const s = (status || 'pending').toLowerCase();
+  const labels = { pending: 'Pending', running: 'Running', complete: 'Complete', failed: 'Failed' };
+  return `<span class="badge badge-${s}"><span class="badge-dot"></span>${labels[s] || s}</span>`;
+}
+
+function failureBadge(failure) {
+  const f = (failure || 'unknown').toLowerCase();
+  const cls = ['retriever','generator','prompt','kb'].includes(f) ? `failure-${f}` : '';
+  return `<span class="badge ${cls}">${f}</span>`;
+}
+
+async function apiFetch(path) {
+  const res = await fetch(API_BASE + path);
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+/* ─────────────────────────────────────────────────
+   API health check
+───────────────────────────────────────────────── */
+async function checkApiHealth() {
+  const el = document.getElementById('api-status');
+  try {
+    await fetch(API_BASE + '/health');
+    el.textContent = '● API Connected';
+    el.className = 'api-ok';
+  } catch {
+    el.textContent = '● API Unreachable';
+    el.className = 'api-err';
+  }
+}
+
+/* ─────────────────────────────────────────────────
+   Section 1 — Run Feed
+───────────────────────────────────────────────── */
+let _selectedRunId = null;
+
+async function loadRuns() {
+  const tbody = document.getElementById('run-tbody');
+  tbody.innerHTML = '<tr><td colspan="5" id="run-empty"><span class="spinner"></span> Loading…</td></tr>';
+  try {
+    const runs = await apiFetch('/runs');
+    renderRunTable(runs);
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="5" id="run-empty" style="color:var(--red)">Failed to load runs: ${err.message}</td></tr>`;
+  }
+}
+
+function renderRunTable(runs) {
+  const tbody = document.getElementById('run-tbody');
+  tbody.innerHTML = '';
+
+  if (!runs || runs.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" id="run-empty">No runs found. Trigger an evaluation to get started.</td></tr>';
+    return;
+  }
+
+  runs.forEach(run => {
+    const tr = document.createElement('tr');
+    tr.dataset.runId = run.id;
+    if (run.id === _selectedRunId) tr.classList.add('selected');
+
+    const sev = fmtSeverity(run.overall_severity);
+
+    tr.innerHTML = `
+      <td><span class="sha">${(run.commit_sha || '').slice(0, 10)}</span></td>
+      <td><span class="branch-tag">${run.branch || '—'}</span></td>
+      <td>${statusBadge(run.status)}</td>
+      <td class="severity-cell ${sev.cls}">${sev.text}</td>
+      <td class="ts-cell">${fmtDate(run.created_at)}</td>
+    `;
+
+    tr.addEventListener('click', () => selectRun(run.id, tr));
+    tbody.appendChild(tr);
+  });
+}
+
+async function selectRun(runId, tr) {
+  // Highlight selected row
+  document.querySelectorAll('#run-tbody tr').forEach(r => r.classList.remove('selected'));
+  tr.classList.add('selected');
+  _selectedRunId = runId;
+
+  // Load all three panels in parallel
+  document.getElementById('fp-content').innerHTML = '<div style="text-align:center;padding:1.5rem"><span class="spinner"></span></div>';
+  document.getElementById('heatmap-content').innerHTML = '<div style="text-align:center;padding:1.5rem"><span class="spinner"></span></div>';
+  document.getElementById('clusters-list').innerHTML = '<div style="text-align:center;padding:1.5rem"><span class="spinner"></span></div>';
+
+  await Promise.allSettled([
+    loadFingerprint(runId),
+    loadHeatmap(runId),
+    loadClusters(runId),
+  ]);
+}
+
+/* ─────────────────────────────────────────────────
+   Section 2 — Fingerprint Panel
+───────────────────────────────────────────────── */
+async function loadFingerprint(runId) {
+  const container = document.getElementById('fp-content');
+  try {
+    const fp = await apiFetch(`/fingerprints/${runId}`);
+    renderFingerprint(fp);
+  } catch (err) {
+    const is404 = err.message.startsWith('404');
+    container.innerHTML = `<div id="fp-placeholder">
+      ${is404
+        ? 'No fingerprint yet.<br>Run may still be in progress.'
+        : `<span style="color:var(--red)">Error: ${err.message}</span>`}
+    </div>`;
+  }
+}
+
+function renderFingerprint(fp) {
+  const container = document.getElementById('fp-content');
+  const attr = fp.attribution || {};
+
+  const components = ['retriever', 'generator', 'prompt', 'kb'];
+  const barsHtml = components.map(c => {
+    const pct = ((attr[c] || 0) * 100).toFixed(1);
+    return `
+      <div class="attr-row">
+        <div class="attr-label-row">
+          <span class="attr-label">${c}</span>
+          <span class="attr-pct">${pct}%</span>
+        </div>
+        <div class="attr-track">
+          <div class="attr-fill fill-${c}" style="width:${pct}%"></div>
+        </div>
+      </div>`;
+  }).join('');
+
+  const sev = fmtSeverity(fp.severity);
+  const confCls = `confidence-${(fp.confidence || 'low').toLowerCase()}`;
+
+  container.innerHTML = `
+    <div style="margin-bottom:0.6rem">
+      ${failureBadge(fp.dominant_failure)}
+      <span style="font-size:0.72rem;color:var(--muted2);margin-left:0.4rem">dominant failure</span>
+    </div>
+    <div class="attr-bar-group">${barsHtml}</div>
+    <div class="fp-meta">
+      <div class="fp-meta-item">
+        <span class="fp-meta-label">Severity</span>
+        <span class="fp-meta-value ${sev.cls}">${sev.text} / 10</span>
+      </div>
+      <div class="fp-meta-item">
+        <span class="fp-meta-label">Confidence</span>
+        <span class="fp-meta-value ${confCls}">${(fp.confidence || '—').toUpperCase()}</span>
+      </div>
+    </div>
+  `;
+}
+
+/* ─────────────────────────────────────────────────
+   Section 3 — Heatmap
+───────────────────────────────────────────────── */
+const METRICS = ['context_recall', 'context_precision', 'groundedness', 'correctness'];
+const METRIC_LABELS = {
+  context_recall:    'C. Recall',
+  context_precision: 'C. Precision',
+  groundedness:      'Grounding',
+  correctness:       'Correctness',
+};
+
+function heatmapClass(score) {
+  if (score == null) return '';
+  if (score > 0.8) return 'hm-green';
+  if (score > 0.6) return 'hm-yellow';
+  return 'hm-red';
+}
+
+async function loadHeatmap(runId) {
+  const container = document.getElementById('heatmap-content');
+  document.getElementById('heatmap-run-label').textContent = '';
+  try {
+    const data = await apiFetch(`/clusters/${runId}/heatmap`);
+    renderHeatmap(data, runId);
+  } catch (err) {
+    const is404 = err.message.startsWith('404');
+    container.innerHTML = `<div id="heatmap-placeholder">${
+      is404 ? 'No result data yet for this run.' : `Error: ${err.message}`
+    }</div>`;
+  }
+}
+
+function renderHeatmap(data, runId) {
+  const container = document.getElementById('heatmap-content');
+  document.getElementById('heatmap-run-label').textContent = runId.slice(0, 8) + '…';
+
+  const categories = data.categories || [];
+  const scores = data.scores || {};
+  const deltas = data.deltas || {};
+
+  if (categories.length === 0) {
+    container.innerHTML = '<div id="heatmap-placeholder">No category data available.</div>';
+    return;
+  }
+
+  // Header row
+  const headerCols = METRICS.map(m =>
+    `<th>${METRIC_LABELS[m] || m}</th>`
+  ).join('');
+
+  // Data rows
+  const rows = categories.map(cat => {
+    const catScores = scores[cat] || {};
+    const catDeltas = deltas[cat] || {};
+
+    const cells = METRICS.map(m => {
+      const val = catScores[m];
+      const delta = catDeltas[m];
+      const cls = heatmapClass(val);
+      const scoreText = val != null ? (val * 100).toFixed(1) + '%' : '—';
+
+      let deltaHtml = '';
+      if (delta != null) {
+        const sign = delta >= 0 ? '+' : '';
+        const deltaCls = delta >= 0 ? 'delta-pos' : 'delta-neg';
+        deltaHtml = `<span class="hm-delta ${deltaCls}">${sign}${(delta * 100).toFixed(1)}%</span>`;
+      }
+      return `<td class="${cls}" title="${cat} — ${METRIC_LABELS[m] || m}: ${scoreText}">${scoreText}${deltaHtml}</td>`;
+    }).join('');
+
+    return `<tr>
+      <td>${cat.replace(/_/g, ' ')}</td>
+      ${cells}
+    </tr>`;
+  }).join('');
+
+  container.innerHTML = `
+    <table id="heatmap-table" aria-label="Score heatmap">
+      <thead><tr><th>Category</th>${headerCols}</tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+/* ─────────────────────────────────────────────────
+   Section 4 — Clusters
+───────────────────────────────────────────────── */
+async function loadClusters(runId) {
+  const list = document.getElementById('clusters-list');
+  document.getElementById('clusters-count').textContent = '';
+  try {
+    const clusters = await apiFetch(`/clusters/${runId}`);
+    renderClusters(clusters);
+  } catch (err) {
+    const is404 = err.message.startsWith('404');
+    list.innerHTML = `<div id="clusters-placeholder">${
+      is404 ? 'No cluster data for this run.' : `Error: ${err.message}`
+    }</div>`;
+  }
+}
+
+function renderClusters(clusters) {
+  const list = document.getElementById('clusters-list');
+  document.getElementById('clusters-count').textContent = clusters.length
+    ? `${clusters.length} cluster${clusters.length !== 1 ? 's' : ''}`
+    : '';
+
+  if (!clusters || clusters.length === 0) {
+    list.innerHTML = '<div id="clusters-placeholder">No failure clusters detected for this run.</div>';
+    return;
+  }
+
+  list.innerHTML = clusters.map(c => `
+    <div class="cluster-card" role="article" aria-label="${c.cluster_label}">
+      <div class="cluster-top">
+        <span class="cluster-label">${c.cluster_label || 'Unnamed Cluster'}</span>
+        <span class="cluster-size">${c.size} Q</span>
+      </div>
+      <div class="cluster-bottom">
+        <span class="cluster-failure-label">Dominant:</span>
+        ${failureBadge(c.dominant_failure)}
+      </div>
+    </div>
+  `).join('');
+}
+
+/* ─────────────────────────────────────────────────
+   Initialise
+───────────────────────────────────────────────── */
+document.addEventListener('DOMContentLoaded', () => {
+  checkApiHealth();
+  loadRuns();
+  // Auto-refresh run list every 30 seconds
+  setInterval(loadRuns, 30_000);
+});
+</script>
+</body>
+</html>

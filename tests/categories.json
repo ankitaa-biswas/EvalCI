@@ -1,0 +1,152 @@
+{
+  "version": "1.0",
+  "description": "EvalCI question category definitions. Each category groups related evaluation questions to enable fine-grained regression detection. The Regression Fingerprinter analyses score changes at the category level to identify which *type* of capability regressed.",
+  "categories": [
+    {
+      "id": "factual_recall",
+      "display_name": "Factual Recall",
+      "description": "Closed-domain factual questions with unambiguous answers. Tests whether the RAG system retrieves and restates documented facts accurately.",
+      "question_ids": ["q001", "q002", "q003", "q004", "q005", "q006"],
+      "primary_failure_indicator": "A drop in this category primarily signals retriever failure — the relevant factual chunks are not being fetched.",
+      "pass_threshold": {
+        "correctness": 0.75,
+        "grounding": 0.80,
+        "hallucination_risk": 0.20
+      }
+    },
+    {
+      "id": "multi_hop_reasoning",
+      "display_name": "Multi-Hop Reasoning",
+      "description": "Questions requiring chaining multiple facts or computation steps. Tests the generator's ability to synthesise across multiple retrieved chunks.",
+      "question_ids": ["q007", "q008", "q009", "q010"],
+      "primary_failure_indicator": "A drop in this category, especially with stable grounding, primarily signals generator failure — the model fails to chain reasoning across multiple contexts.",
+      "pass_threshold": {
+        "correctness": 0.65,
+        "grounding": 0.70,
+        "hallucination_risk": 0.30
+      }
+    },
+    {
+      "id": "definition_lookup",
+      "display_name": "Definition Lookup",
+      "description": "Questions asking for precise definitions of technical or domain-specific terms. Tests exact retrieval of definitional passages.",
+      "question_ids": ["q011", "q012", "q013", "q014", "q015"],
+      "primary_failure_indicator": "Regressions here often indicate chunking issues where definitions are split across chunk boundaries (retriever failure).",
+      "pass_threshold": {
+        "correctness": 0.80,
+        "grounding": 0.85,
+        "hallucination_risk": 0.15
+      }
+    },
+    {
+      "id": "causal_reasoning",
+      "display_name": "Causal Reasoning",
+      "description": "Questions about cause-and-effect relationships in the domain. Tests whether the RAG system can retrieve mechanistic explanations accurately.",
+      "question_ids": ["q016", "q017", "q018", "q019", "q020"],
+      "primary_failure_indicator": "Drops here with low grounding suggest retriever failure; drops with high grounding suggest generator hallucination.",
+      "pass_threshold": {
+        "correctness": 0.70,
+        "grounding": 0.75,
+        "hallucination_risk": 0.25
+      }
+    },
+    {
+      "id": "procedural_knowledge",
+      "display_name": "Procedural Knowledge",
+      "description": "Step-by-step how-to questions. Tests whether the RAG system can assemble ordered procedural information from multiple chunks.",
+      "question_ids": ["q021", "q022", "q023", "q024", "q025"],
+      "primary_failure_indicator": "Step omissions or ordering errors with high grounding indicate generator failures in synthesis.",
+      "pass_threshold": {
+        "correctness": 0.70,
+        "grounding": 0.75,
+        "hallucination_risk": 0.25
+      }
+    },
+    {
+      "id": "comparative_analysis",
+      "display_name": "Comparative Analysis",
+      "description": "Questions requiring side-by-side comparison of two or more concepts. Tests multi-document retrieval and synthesis.",
+      "question_ids": ["q026", "q027", "q028", "q029", "q030"],
+      "primary_failure_indicator": "Low context_recall paired with low correctness strongly implicates retriever failure (missing one of the compared concepts).",
+      "pass_threshold": {
+        "correctness": 0.68,
+        "grounding": 0.72,
+        "hallucination_risk": 0.28
+      }
+    },
+    {
+      "id": "troubleshooting",
+      "display_name": "Troubleshooting",
+      "description": "Diagnostic questions presenting a symptom and asking for root causes. Tests the system's ability to retrieve and reason over technical failure scenarios.",
+      "question_ids": ["q031", "q032", "q033", "q034", "q035"],
+      "primary_failure_indicator": "Regressions here are often generator failures — the model proposes plausible-sounding but incorrect diagnoses.",
+      "pass_threshold": {
+        "correctness": 0.65,
+        "grounding": 0.70,
+        "hallucination_risk": 0.30
+      }
+    },
+    {
+      "id": "architecture_design",
+      "display_name": "Architecture & Design",
+      "description": "Questions about system design rationale and architectural trade-offs. Tests conceptual retrieval and nuanced synthesis.",
+      "question_ids": ["q036", "q037", "q038", "q039", "q040"],
+      "primary_failure_indicator": "High hallucination_risk with moderate correctness suggests the generator is mixing parametric bias with retrieved context.",
+      "pass_threshold": {
+        "correctness": 0.68,
+        "grounding": 0.73,
+        "hallucination_risk": 0.27
+      }
+    },
+    {
+      "id": "code_understanding",
+      "display_name": "Code Understanding",
+      "description": "Questions about specific code patterns, APIs, and library behaviours. Tests retrieval of technical documentation and code comments.",
+      "question_ids": ["q041", "q042", "q043", "q044", "q045"],
+      "primary_failure_indicator": "Regressions here often indicate embedding model issues with code-heavy text (retriever failure).",
+      "pass_threshold": {
+        "correctness": 0.72,
+        "grounding": 0.78,
+        "hallucination_risk": 0.22
+      }
+    },
+    {
+      "id": "ethical_safety",
+      "display_name": "Ethical & Safety",
+      "description": "Questions about risks, biases, and safety considerations. Tests nuanced retrieval of cautionary and compliance-related content.",
+      "question_ids": ["q046", "q047", "q048"],
+      "primary_failure_indicator": "Low scores here are a red flag — both retriever completeness and generator conservatism are critical for safety-adjacent answers.",
+      "pass_threshold": {
+        "correctness": 0.70,
+        "grounding": 0.80,
+        "hallucination_risk": 0.20
+      }
+    },
+    {
+      "id": "deployment",
+      "display_name": "Deployment & Operations",
+      "description": "Questions about deploying, configuring, and operating the system in production. Tests operational documentation retrieval.",
+      "question_ids": ["q049", "q050"],
+      "primary_failure_indicator": "Regressions here typically signal gaps in operational documentation coverage in the vector store.",
+      "pass_threshold": {
+        "correctness": 0.72,
+        "grounding": 0.78,
+        "hallucination_risk": 0.22
+      }
+    }
+  ],
+  "global_pass_threshold": {
+    "correctness": 0.70,
+    "grounding": 0.75,
+    "hallucination_risk": 0.25,
+    "context_recall": 0.70,
+    "context_precision": 0.65
+  },
+  "regression_thresholds": {
+    "grounding_delta": -0.05,
+    "correctness_delta": -0.05,
+    "context_recall_delta": -0.05,
+    "severity_medium": 0.05,
+    "severity_high": 0.15
+  }
+}

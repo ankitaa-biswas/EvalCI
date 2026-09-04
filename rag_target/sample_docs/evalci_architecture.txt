@@ -1,0 +1,69 @@
+EvalCI Architecture and Ragas Evaluation Metrics
+
+EVALCI SYSTEM OVERVIEW
+
+EvalCI is a continuous integration harness for RAG systems. It triggers automated evaluation runs on every code push, scores RAG answers using the Ragas library, and generates a Regression Fingerprint Report that attributes quality drops to specific pipeline components.
+
+The system comprises:
+- FastAPI API server: Receives CI triggers, exposes results, streams live updates via SSE.
+- Celery workers: Execute evaluation tasks asynchronously, preventing HTTP request timeout.
+- PostgreSQL database: Stores run records, per-question scores, category aggregates, and fingerprint reports.
+- Redis: Serves as the Celery broker, result backend, score cache, and SSE pub/sub channel.
+- ChromaDB: The vector store that acts as the RAG retrieval backend for evaluation.
+
+WHY ASYNC EVALUATION MATTERS
+
+Evaluating 50 questions requires 50 RAG queries and 50 Ragas scoring calls, which can take 5-15 minutes depending on LLM API latency. Processing this synchronously in a single HTTP request would cause timeout errors in both the CI pipeline and the API server. EvalCI solves this by enqueuing the evaluation as a Celery background task. The /evaluate endpoint returns immediately with a run_id. The CI script polls /evaluate/{run_id}/status or subscribes to /stream/{run_id} for live updates.
+
+SCORE CACHING FOR EFFICIENCY
+
+EvalCI caches per-question Ragas scores in Redis keyed by (question_id, commit_sha). This means that when a code commit only changes the generator (e.g., a prompt template update), questions whose retrieval behaviour is unchanged can reuse cached scores without re-querying the LLM. In practice, this can achieve 60-90% cache hit rates when only a small part of the pipeline changes, dramatically reducing OpenAI API costs and evaluation latency.
+
+RAGAS METRICS
+
+Ragas is an open-source RAG evaluation framework that provides reference-free and reference-based metrics:
+
+answer_correctness: Measures the semantic similarity between the RAG system's answer and the ground-truth answer from the test suite. Uses an LLM judge combined with token-level F1 scoring. Values range from 0 to 1; higher is better.
+
+faithfulness (grounding): Measures whether every factual claim in the generated answer is supported by the retrieved contexts. Uses an LLM to extract claims from the answer and verify each claim against the contexts. A faithfulness score of 1.0 means the answer is completely grounded; 0.0 means the answer contradicts or ignores the context entirely.
+
+context_recall: Measures the fraction of the ground-truth answer's content that is covered by the retrieved contexts. High context_recall means the retriever successfully fetched the relevant information. Low recall means relevant information was not retrieved.
+
+context_precision: Measures the fraction of retrieved chunks that are relevant to the query. High precision means retrieval is focused. Low precision (with high recall) indicates noisy retrieval — the retriever is fetching relevant information but also many irrelevant chunks.
+
+hallucination_risk: Derived metric computed as 1 - faithfulness. Values closer to 1 indicate higher risk of hallucinated content in the answer.
+
+THE REGRESSION FINGERPRINT ALGORITHM
+
+The Regression Fingerprint is EvalCI's core novel contribution. When a run's scores are lower than the baseline, the Fingerprinter determines which component caused the regression by examining metric divergence patterns:
+
+Pattern 1 — RETRIEVER failure: Both grounding and correctness drop, AND context_recall also drops. The retriever is fetching worse chunks; since the generator cannot produce correct answers without good context, correctness follows grounding down. Grounding delta >= 0.05 AND context_recall delta >= 0.05.
+
+Pattern 2 — GENERATOR failure: Correctness drops but grounding remains stable (delta < 0.05). The retriever is still providing good context, but the LLM is failing to utilise it correctly. This can happen due to prompt template regression, model version change, or increased temperature.
+
+Pattern 3 — BOTH failing: Grounding drops significantly but correctness does not drop proportionally. This indicates "lucky correct answers" — the retriever is degraded but the generator is somehow still producing correct outputs (possibly from parametric memory). This is a fragile state.
+
+Severity is computed as: severity_score = abs(correctness_delta) + 0.5 * abs(grounding_delta).
+LOW: severity < 0.05, MEDIUM: 0.05 <= severity < 0.15, HIGH: severity >= 0.15.
+
+ENVIRONMENT VARIABLES
+
+EvalCI requires these environment variables to function:
+- OPENAI_API_KEY: Required for LLM generation and Ragas evaluation.
+- DATABASE_URL: PostgreSQL connection string with asyncpg driver.
+- REDIS_URL: Redis broker and cache connection URL.
+- CHROMA_HOST and CHROMA_PORT: ChromaDB server location.
+- PASS_THRESHOLD: Minimum overall score to pass a run (default 0.70).
+- CACHE_TTL_SECONDS: How long to cache per-question scores (default 604800 = 7 days).
+- OPENAI_MODEL: LLM model for generation (default gpt-4o-mini).
+- RAG_TOP_K: Number of document chunks to retrieve per question (default 5).
+
+GITHUB ACTIONS INTEGRATION
+
+The EvalCI GitHub Actions workflow (.github/workflows/evalci.yml) is triggered on push to main and on pull requests. It runs four sequential jobs:
+1. trigger-eval: POSTs to /evaluate and captures the run_id.
+2. poll-completion: Polls /evaluate/{run_id}/status every 30 seconds for up to 20 minutes.
+3. fetch-results: Downloads the full score payload and fingerprint report, saves as artifacts.
+4. quality-gate: Fails the CI job if any category has a HIGH-severity regression. Posts a fingerprint summary as a PR comment.
+
+The quality gate prevents degraded RAG code from being merged to main by failing the GitHub Actions check, which can be set as a required status check in branch protection rules.

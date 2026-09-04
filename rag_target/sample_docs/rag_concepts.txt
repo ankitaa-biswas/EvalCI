@@ -1,0 +1,51 @@
+RAG Concepts and Retrieval-Augmented Generation
+
+WHAT IS RETRIEVAL-AUGMENTED GENERATION (RAG)?
+
+Retrieval-Augmented Generation, commonly referred to as RAG, is an AI framework that enhances large language models (LLMs) by connecting them to external knowledge sources at inference time. A RAG system consists of two main components: a retriever and a generator.
+
+The retriever is responsible for finding the most relevant pieces of information from a document corpus. It typically uses dense vector embeddings to represent both documents and queries in a high-dimensional semantic space, then finds the nearest neighbours using approximate nearest-neighbour (ANN) search algorithms. The retrieved document chunks are called "contexts" or "grounding contexts."
+
+The generator is a large language model that receives the retrieved contexts alongside the original query and produces a natural language answer. The model is instructed to rely only on the provided context rather than its parametric knowledge, which reduces hallucination.
+
+WHY USE RAG INSTEAD OF FINE-TUNING?
+
+RAG offers several advantages over fine-tuning:
+1. Knowledge can be updated without retraining the model — simply update the document corpus.
+2. Answers are traceable to source documents, improving auditability.
+3. RAG is computationally cheaper than fine-tuning for domain adaptation.
+4. The same base LLM can serve multiple domains by swapping document collections.
+
+VECTOR DATABASES AND EMBEDDINGS
+
+A vector database stores high-dimensional numerical embeddings and supports efficient similarity search. Popular options include ChromaDB, Pinecone, Weaviate, Qdrant, and Milvus.
+
+ChromaDB is an open-source, developer-friendly vector database that can run locally or be self-hosted. It supports multiple embedding functions, metadata filtering, and both ephemeral and persistent storage modes. ChromaDB is well-suited for development, prototyping, and small-to-medium-scale deployments.
+
+Pinecone is a managed cloud vector database service with enterprise-grade scaling, replication, and built-in metadata filtering. Unlike ChromaDB, Pinecone charges based on vector count and query volume. It is preferred for high-throughput production environments.
+
+Cosine similarity is the most common similarity metric used in RAG retrieval. It measures the cosine of the angle between two embedding vectors. Values range from -1 (completely opposite) to 1 (identical direction), with 0 indicating orthogonality. In practice, embeddings for semantically similar texts cluster near 1.0.
+
+HOW CHUNK OVERLAP AFFECTS GROUNDING
+
+When documents are split into chunks for indexing, the boundaries between chunks can cause important information to be split across two non-adjacent chunks. Chunk overlap — duplicating a portion of text at the beginning of each new chunk — mitigates this problem. Higher overlap ensures that semantically related sentences near chunk boundaries remain co-located in at least one chunk, improving the faithfulness (grounding) of retrieved contexts.
+
+A typical chunk size is 256–1024 tokens with 10–15% overlap. Increasing overlap improves grounding but increases the number of stored vectors and retrieval time.
+
+RETRIEVER FAILURE MODES
+
+The retriever can fail in several ways:
+1. Embedding model drift: If the embedding model changes between indexing and querying, similarity scores become invalid.
+2. Stale index: New documents added to the corpus without re-indexing will not be retrievable.
+3. Top-k too low: Setting the number of retrieved chunks (top-k) too small may miss relevant information.
+4. Noisy retrieval: Setting top-k too high brings in irrelevant chunks that confuse the generator.
+5. Domain mismatch: Embedding models trained on general text may under-perform on specialised technical domains.
+
+GENERATOR FAILURE MODES
+
+The generator (LLM) can fail independently of the retriever:
+1. Context ignorance: A strongly opinionated LLM may override retrieved context with its parametric knowledge.
+2. High temperature: Sampling at high temperature increases creativity but also hallucination rate.
+3. Prompt template regression: Changes to the system prompt can inadvertently instruct the model to be more creative or less faithful.
+4. Model version change: Different model versions (e.g., gpt-4o vs gpt-4o-mini) have different propensities for following instructions.
+5. Long context dilution: Very long context windows can cause the model to ignore information in the "lost in the middle" phenomenon.
