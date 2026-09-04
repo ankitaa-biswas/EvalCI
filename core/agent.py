@@ -36,14 +36,14 @@ from __future__ import annotations
 import json
 import os
 
-import anthropic
+import google.generativeai as genai
 
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-_MODEL: str = "claude-haiku-4-5"
+_MODEL: str = "gemini-1.5-flash"
 
 _SYSTEM_PROMPT: str = (
     "You are a RAG diagnostic assistant. "
@@ -309,17 +309,10 @@ class RootCauseAgent:
         Returns:
             The model's reply as a plain string, or an empty string on error.
         """
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        client = anthropic.Anthropic(api_key=api_key)
-
-        message = client.messages.create(
-            model=_MODEL,
-            max_tokens=1024,
-            system=_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_prompt}],
-        )
-        # Extract text from the first content block.
-        return message.content[0].text
+        genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
+        model = genai.GenerativeModel(_MODEL, system_instruction=_SYSTEM_PROMPT)
+        response = model.generate_content(user_prompt)
+        return response.text
 
     # ------------------------------------------------------------------
     # Step 5 — Response parsing
