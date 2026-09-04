@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from api.middleware.auth import APIKeyMiddleware
 from api.routes import evaluate, results, stream
 from db.database import init_db, close_db
 
@@ -54,6 +55,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# API key authentication — reads EVALCI_API_KEYS from env (comma-separated).
+# Runs after CORS so OPTIONS pre-flight requests are not blocked.
+app.add_middleware(APIKeyMiddleware)
 
 # ---------------------------------------------------------------------------
 # Route registration
