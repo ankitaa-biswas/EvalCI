@@ -5,6 +5,10 @@ import os
 import uuid
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+load_dotenv()  # Load GOOGLE_API_KEY and other vars from .env before anything else
+
 import chromadb
 from chromadb.config import Settings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -73,7 +77,7 @@ def embed_and_upsert(
     Embed chunks via OpenAI and upsert into ChromaDB.
     Returns number of chunks upserted.
     """
-    embedder = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
+    embedder = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
     collection = client.get_or_create_collection(
         name=collection_name,
         metadata={"hnsw:space": "cosine"},

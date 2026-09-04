@@ -14,7 +14,7 @@ python-multipart>=0.0.9         # Required for FastAPI file uploads (future use)
 # Database
 # ──────────────────────────────────────────────────────────────
 sqlalchemy>=2.0.0,<3.0.0
-asyncpg>=0.29.0,<0.30.0         # Async PostgreSQL driver for SQLAlchemy
+asyncpg>=0.29.0,<0.31.0         # Async PostgreSQL driver; 0.30+ required for Python 3.13
 alembic>=1.13.0,<2.0.0          # Database migrations (Cycle 3)
 psycopg2-binary>=2.9.0          # Sync driver (needed by Alembic)
 
