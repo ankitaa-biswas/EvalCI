@@ -9,9 +9,9 @@ import chromadb
 from langchain_google_genai import ChatGoogleGenAI, GoogleGenerativeAIEmbeddings
 from langchain.schema import HumanMessage, SystemMessage
 
-from rag_target.ingest import get_chroma_client, COLLECTION_NAME
+from rag_target.ingest import get_chroma_client, COLLECTION_NAME, GEMINI_EMBEDDING_MODEL
 
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gemini-1.5-flash")
+GEMINI_GENERATION_MODEL = os.getenv("GEMINI_GENERATION_MODEL", "gemini-1.5-flash")
 TOP_K = int(os.getenv("RAG_TOP_K", "5"))
 
 _RAG_SYSTEM_PROMPT = (
@@ -50,7 +50,7 @@ async def retrieve_contexts(
     """
     Embed the query and retrieve the top-k document chunks from ChromaDB.
     """
-    embedder = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
+    embedder = GoogleGenerativeAIEmbeddings(model=f"models/{GEMINI_EMBEDDING_MODEL}")
     query_embedding = embedder.embed_query(question)
 
     collection = client.get_or_create_collection(
@@ -76,7 +76,7 @@ async def generate_answer(question: str, contexts: list[str]) -> str:
     context_text = "\n\n---\n\n".join(contexts)
     system_content = _RAG_SYSTEM_PROMPT.format(context=context_text)
 
-    llm = ChatGoogleGenAI(model=OPENAI_MODEL, temperature=0.0)
+    llm = ChatGoogleGenAI(model=GEMINI_GENERATION_MODEL, temperature=0.0)
     messages = [
         SystemMessage(content=system_content),
         HumanMessage(content=question),

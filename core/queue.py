@@ -84,12 +84,15 @@ async def _async_run_evaluation(
     rag_endpoint: str | None,
 ) -> None:
     """Async body of the Celery evaluation task."""
+    import statistics as _statistics
+
     from core.cache import get_redis_client, publish_score_event
-    from core.evaluator import aggregate_by_category, run_evaluation
-    from core.fingerprinter import build_fingerprint
+    from core.evaluator import RAGEvaluator, aggregate_by_category
+    from core.fingerprinter import RegressionFingerprinter
     from db.crud import (
         bulk_insert_category_scores,
         bulk_insert_question_scores,
+        get_category_scores_for_run,
         get_last_successful_run_on_branch,
         save_fingerprint,
         update_run_status,
@@ -122,13 +125,52 @@ async def _async_run_evaluation(
                         "pass_threshold", {}
                     )
 
-            # --- 4. Run evaluation ---
-            scores = await run_evaluation(
-                run_id=run_id,
-                questions=questions,
-                commit_sha=commit_sha,
-                rag_endpoint=rag_endpoint,
+            # --- 4. Run RAG evaluation (synchronous; offloaded to thread pool) ---
+            if not rag_endpoint:
+                raise ValueError("rag_endpoint is required but was not provided.")
+
+            evaluator = RAGEvaluator()
+            loop = asyncio.get_event_loop()
+            # RAGEvaluator.evaluate() is synchronous (uses httpx.Client).
+            # Run it in a thread pool so we do not block the event loop.
+            raw_results: list[dict] = await loop.run_in_executor(
+                None, evaluator.evaluate, questions, rag_endpoint
             )
+
+            # RAGEvaluator returns nested {"scores": {...}} dicts.  The rest of
+            # the pipeline (aggregate_by_category, bulk_insert_question_scores)
+            # expects the flat format produced by score_to_dict.  Build a
+            # parallel mapping from question_id → raw rag_output so we can call
+            # score_to_dict to produce the flat dicts.
+            #
+            # RAGEvaluator.evaluate() already combines q/rag_out/ragas_row
+            # into the nested result dict, so we reconstruct the flat form here.
+            scores: list[dict] = []
+            for item in raw_results:
+                s = item["scores"]
+                flat = {
+                    "question_id":       item["question_id"],
+                    "category":          item["category"],
+                    # question text is not carried through RAGEvaluator.evaluate();
+                    # look it up from the original questions list.
+                    "question":          next(
+                        (q["question"] for q in questions if q["id"] == item["question_id"]),
+                        "",
+                    ),
+                    "answer":            item["answer"],
+                    "contexts":          item["retrieved_chunks"],
+                    "ground_truth":      next(
+                        (q["ground_truth"] for q in questions if q["id"] == item["question_id"]),
+                        "",
+                    ),
+                    "correctness":       s["correctness"],
+                    "grounding":         s["groundedness"],
+                    "hallucination_risk": round(max(0.0, 1.0 - s["groundedness"]), 4),
+                    "context_recall":    s["context_recall"],
+                    "context_precision": s["context_precision"],
+                    "from_cache":        False,
+                }
+                scores.append(flat)
 
             # --- 5. Aggregate by category ---
             cat_scores = aggregate_by_category(scores, category_thresholds)
@@ -139,8 +181,7 @@ async def _async_run_evaluation(
 
             # --- 7. Compute overall score ---
             if scores:
-                import statistics
-                overall = statistics.mean(s["correctness"] for s in scores)
+                overall = _statistics.mean(s["correctness"] for s in scores)
             else:
                 overall = 0.0
 
@@ -158,24 +199,84 @@ async def _async_run_evaluation(
 
             if resolved_baseline_id:
                 try:
-                    report = await build_fingerprint(
-                        run_id=run_id,
-                        baseline_run_id=resolved_baseline_id,
-                        db=db,
+                    # Fetch per-category metric averages for both runs from the DB.
+                    current_cat_data = await get_category_scores_for_run(db, run_id)
+                    baseline_cat_data = await get_category_scores_for_run(
+                        db, resolved_baseline_id
                     )
-                    if report.overall_regressed:
-                        report_dict = {
-                            "overall_regressed": report.overall_regressed,
-                            "top_failing_component": report.top_failing_component.value,
-                            "summary": report.summary,
-                            "regressions": [
-                                r.model_dump() for r in report.regressions
-                            ],
-                            "action_items": report.action_items,
+
+                    # Build scalar metric snapshots (mean across all categories).
+                    def _mean_snapshot(cat_data: dict) -> dict:
+                        """Average per-category metrics into one scalar snapshot."""
+                        rows = list(cat_data.values())
+                        if not rows:
+                            return {
+                                "correctness": 0.0,
+                                "groundedness": 0.0,
+                                "context_recall": 0.0,
+                                "context_precision": 0.0,
+                            }
+                        return {
+                            "correctness":       _statistics.mean(r["avg_correctness"]      for r in rows),
+                            "groundedness":      _statistics.mean(r["avg_grounding"]         for r in rows),
+                            "context_recall":    _statistics.mean(r["avg_context_recall"]   for r in rows),
+                            "context_precision": _statistics.mean(r["avg_context_precision"] for r in rows),
                         }
+
+                    current_snapshot  = _mean_snapshot(current_cat_data)
+                    baseline_snapshot = _mean_snapshot(baseline_cat_data)
+
+                    fp = RegressionFingerprinter()
+                    result = fp.compute(baseline_snapshot, current_snapshot)
+
+                    # Determine whether there is an overall regression (any metric
+                    # dropped beyond the noise floor of −0.05).
+                    overall_regressed = any(d < -0.05 for d in result["deltas"].values())
+                    dominant = result["dominant_failure"]
+                    severity = result["severity"]
+
+                    # Build action items from the attribution breakdown.
+                    action_items: list[str] = []
+                    attr = result["attribution"]
+                    if attr.get("retriever", 0) > 0.25:
+                        action_items.append("Investigate retriever: context recall and/or precision dropped.")
+                    if attr.get("generator", 0) > 0.25:
+                        action_items.append("Investigate generator: groundedness dropped with stable retrieval.")
+                    if attr.get("prompt", 0) > 0.25:
+                        action_items.append("Investigate prompt template: correctness regressed without other signals.")
+                    if attr.get("kb", 0) > 0.25:
+                        action_items.append("Investigate knowledge base: diffuse quality decline detected.")
+
+                    summary = (
+                        f"Regression detected. Dominant failure component: {dominant}. "
+                        f"Severity: {severity}/10."
+                    ) if overall_regressed else "No significant regression detected."
+
+                    report_dict = {
+                        "overall_regressed":    overall_regressed,
+                        "top_failing_component": dominant,
+                        "summary":              summary,
+                        "regressions": [
+                            {
+                                "metric":  metric,
+                                "delta":   delta,
+                                "dropped": delta < -0.05,
+                            }
+                            for metric, delta in result["deltas"].items()
+                        ],
+                        "action_items": action_items,
+                    }
+
+                    if overall_regressed:
                         await save_fingerprint(
                             db, run_id, resolved_baseline_id, report_dict
                         )
+                    else:
+                        logger.info(
+                            f"Fingerprint computed for run {run_id}: no regression. "
+                            f"Severity={severity}"
+                        )
+
                 except Exception as fp_err:
                     logger.warning(f"Fingerprinting failed (non-fatal): {fp_err}")
 

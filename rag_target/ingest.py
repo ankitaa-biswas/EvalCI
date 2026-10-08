@@ -22,6 +22,12 @@ SAMPLE_DOCS_DIR = os.path.join(os.path.dirname(__file__), "sample_docs")
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "512"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "64"))
 
+# Single embedding-model setting shared by ingest and query paths.
+# Both must use the same model so stored vectors and query vectors occupy
+# the same embedding space.
+GEMINI_EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
+
+
 
 def get_chroma_client() -> chromadb.HttpClient:
     """Return a ChromaDB HTTP client connected to the configured host."""
@@ -77,7 +83,7 @@ def embed_and_upsert(
     Embed chunks via OpenAI and upsert into ChromaDB.
     Returns number of chunks upserted.
     """
-    embedder = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+    embedder = GoogleGenerativeAIEmbeddings(model=f"models/{GEMINI_EMBEDDING_MODEL}")
     collection = client.get_or_create_collection(
         name=collection_name,
         metadata={"hnsw:space": "cosine"},
