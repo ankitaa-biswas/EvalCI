@@ -35,17 +35,25 @@ async def trigger_evaluation(
     Accept an evaluation request from CI, create a DB run record,
     enqueue a Celery task, and return the run_id immediately.
     """
-    # 1. Create DB record in PENDING state
-    run = await create_run(
-        db,
-        commit_sha=payload.commit_sha,
-        branch=payload.branch,
-        triggered_by=payload.triggered_by,
-    )
-    run_id = str(run.id)
-
-    # 2. Resolve question set path
+    from core.configuration import load_evaluation
+    from core.baselines import resolve_baseline
+    from core.reports import Completion
     question_set_path = str(payload.question_set_path or _DEFAULT_QUESTION_SET)
+    try:
+        questions, provenance = load_evaluation(question_set_path, payload.commit_sha, str(payload.rag_endpoint))
+        if payload.baseline_run_id:
+            await resolve_baseline(db, str(payload.baseline_run_id), None, provenance)
+    except (ValueError, OSError, KeyError) as exc:
+        raise HTTPException(status_code=422, detail=f"Evaluation configuration error: {exc}") from exc
+    run = await create_run(db, commit_sha=payload.commit_sha, branch=payload.branch,
+                           triggered_by=payload.triggered_by)
+    run.provenance = provenance.model_dump(mode="json")
+    run.completion = Completion(expected=len(questions), attempted=0, successfully_scored=0, failed=0).model_dump()
+    run.baseline_run_id = payload.baseline_run_id
+    run.baseline_bootstrap = payload.baseline_bootstrap
+    run.evaluation_errors = []
+    await db.commit()
+    run_id = str(run.id)
 
     # 3. Enqueue Celery task
     try:
@@ -55,15 +63,16 @@ async def trigger_evaluation(
             branch=payload.branch,
             question_set_path=question_set_path,
             baseline_run_id=str(payload.baseline_run_id) if payload.baseline_run_id else None,
-            rag_endpoint=str(payload.rag_endpoint) if payload.rag_endpoint else None,
+            rag_endpoint=str(payload.rag_endpoint),
+            baseline_bootstrap=payload.baseline_bootstrap,
         )
         # Store celery task id
         await update_run_status(
-            db, run_id, DBRunStatus.PENDING, celery_task_id=celery_task_id
+            db, run_id, None, celery_task_id=celery_task_id
         )
     except Exception as exc:
         await update_run_status(
-            db, run_id, DBRunStatus.FAILED, error_message=str(exc)
+            db, run_id, DBRunStatus.FAILED, passed=False, error_message=str(exc)
         )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -99,9 +108,10 @@ async def get_run_status(
 
     return {
         "run_id": run_id,
-        "status": run.status.value,
+        "status": run.status,
         "overall_score": run.overall_score,
         "passed": run.passed,
         "progress_pct": progress_pct,
+        "completion": run.completion,
         "error_message": run.error_message,
     }

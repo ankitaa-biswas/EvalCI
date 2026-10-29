@@ -34,7 +34,7 @@ from alembic import context
 # Import all model classes so they are registered on Base.metadata before
 # Alembic inspects it for autogenerate diffs.
 import db.models  # noqa: F401 — side-effect import registers ORM models
-from db.database import Base
+from db.models import Base
 
 # Alembic compares this metadata against the live DB schema to produce diffs.
 target_metadata = Base.metadata
@@ -81,7 +81,7 @@ if config.config_file_name is not None:
 
 # Override the sqlalchemy.url from the ini file with the env-var value so
 # DATABASE_URL is the single source of truth.
-config.set_main_option("sqlalchemy.url", _get_sync_database_url())
+config.set_main_option("sqlalchemy.url", _get_sync_database_url().replace("%", "%%"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

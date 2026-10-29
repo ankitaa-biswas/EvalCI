@@ -7,7 +7,7 @@ SQLAlchemy ORM models for EvalCI database.
 import enum
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     JSON,
@@ -22,7 +22,7 @@ from sqlalchemy import (
     create_engine,
 )
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import declarative_base, relationship
 
 # The user requested to use declarative_base
 Base = declarative_base()
@@ -56,14 +56,22 @@ class EvalRun(Base):
     commit_sha = Column(String, nullable=False)
     branch = Column(String, nullable=False)
     triggered_by = Column(String, nullable=True)          # e.g. "github-actions"
-    created_at = Column(DateTime, default=datetime.utcnow)
-    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    completed_at = Column(DateTime(timezone=True), nullable=True)
     status = Column(String, nullable=False)               # see RunStatus enum values
     overall_severity = Column(Float, nullable=True)
     overall_score = Column(Float, nullable=True)
     passed = Column(Boolean, nullable=True)
     error_message = Column(Text, nullable=True)
     celery_task_id = Column(String, nullable=True)
+    provenance = Column(JSON, nullable=True)
+    completion = Column(JSON, nullable=True)
+    evaluation_errors = Column(JSON, nullable=True)
+    baseline_bootstrap = Column(Boolean, nullable=False, default=False, server_default="false")
+    baseline_run_id = Column(UUID(as_uuid=True), nullable=True)
+    scores = relationship("QuestionScore", lazy="selectin")
+    categories = relationship("CategoryScore", lazy="selectin")
+    fingerprint = relationship("FingerprintReport", foreign_keys="FingerprintReport.run_id", uselist=False, lazy="selectin")
 
     def __repr__(self):
         return f"<EvalRun(id={self.id}, commit_sha='{self.commit_sha}', status='{self.status}')>"
@@ -185,12 +193,13 @@ class FingerprintReport(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     run_id = Column(UUID(as_uuid=True), ForeignKey("eval_runs.id"), nullable=False)
-    baseline_run_id = Column(UUID(as_uuid=True), ForeignKey("eval_runs.id"), nullable=False)
+    baseline_run_id = Column(UUID(as_uuid=True), ForeignKey("eval_runs.id"), nullable=True)
     overall_regressed = Column(Boolean, nullable=False)
     top_failing_component = Column(String, nullable=True)
     summary = Column(Text, nullable=True)
     regressions = Column(JSON, nullable=True)    # list[dict] of per-category regressions
     action_items = Column(JSON, nullable=True)   # list[str]
+    report = Column(JSON, nullable=True)  # Canonical versioned contract; legacy rows fail closed.
 
     def __repr__(self):
         return (
@@ -223,9 +232,4 @@ class FailureCluster(Base):
 # ---------------------------------------------------------------------------
 # Sync engine (used by Alembic migrations only)
 # ---------------------------------------------------------------------------
-
-# Read DB URL from env var DATABASE_URL
-database_url = os.getenv("DATABASE_URL")
-if database_url:
-    engine = create_engine(database_url)
 

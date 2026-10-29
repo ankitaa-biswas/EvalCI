@@ -44,7 +44,7 @@ async def create_run(
 async def update_run_status(
     db: AsyncSession,
     run_id: str,
-    status: RunStatus,
+    status: RunStatus | None,
     overall_score: float | None = None,
     passed: bool | None = None,
     error_message: str | None = None,
@@ -56,7 +56,8 @@ async def update_run_status(
     if run is None:
         raise ValueError(f"EvalRun {run_id} not found")
 
-    run.status = status
+    if status is not None:
+        run.status = status
     if overall_score is not None:
         run.overall_score = overall_score
     if passed is not None:
@@ -200,20 +201,25 @@ async def get_category_scores_for_run(
 async def save_fingerprint(
     db: AsyncSession,
     run_id: str,
-    baseline_run_id: str,
+    baseline_run_id: str | None,
     report: dict,
 ) -> FingerprintReport:
-    """Persist a FingerprintReport to the database."""
-    fp = FingerprintReport(
-        run_id=uuid.UUID(str(run_id)),
-        baseline_run_id=uuid.UUID(str(baseline_run_id)),
-        overall_regressed=report["overall_regressed"],
-        top_failing_component=report["top_failing_component"],
-        summary=report["summary"],
-        regressions=report["regressions"],
-        action_items=report["action_items"],
-    )
-    db.add(fp)
+    """Validate and persist the exact contract returned by HTTP and read by the gate."""
+    from core.reports import FingerprintReport as Report
+    validated = Report.model_validate(report)
+    if str(validated.run_id) != str(run_id) or (str(validated.baseline_run_id) if validated.baseline_run_id else None) != baseline_run_id:
+        raise ValueError("Report identity does not match persistence arguments")
+    fp = await get_fingerprint_by_run(db, run_id)
+    if fp is None:
+        fp = FingerprintReport(run_id=uuid.UUID(str(run_id)))
+        db.add(fp)
+    fp.baseline_run_id = validated.baseline_run_id
+    fp.overall_regressed = validated.overall_regressed
+    fp.top_failing_component = validated.top_failing_component
+    fp.summary = validated.summary
+    fp.regressions = [r.model_dump(mode="json") for r in validated.regressions]
+    fp.action_items = validated.action_items
+    fp.report = validated.model_dump(mode="json")
     await db.commit()
     await db.refresh(fp)
     return fp

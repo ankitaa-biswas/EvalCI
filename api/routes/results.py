@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.models.run import EvalRunDetail, EvalRunSummary
-from api.models.score import CategoryRegression, FailingComponent, FingerprintReport
+from core.reports import FingerprintReport
 from db.crud import get_all_runs, get_fingerprint_by_run, get_run_by_id
 from db.database import get_db
 from db.models import RunStatus
@@ -32,7 +32,7 @@ async def list_runs(
             commit_sha=r.commit_sha,
             branch=r.branch,
             triggered_by=r.triggered_by,
-            status=r.status.value,
+            status=r.status,
             overall_score=r.overall_score,
             passed=r.passed,
             created_at=r.created_at,
@@ -95,7 +95,7 @@ async def get_run(
         commit_sha=run.commit_sha,
         branch=run.branch,
         triggered_by=run.triggered_by,
-        status=run.status.value,
+        status=run.status,
         overall_score=run.overall_score,
         passed=run.passed,
         created_at=run.created_at,
@@ -104,6 +104,11 @@ async def get_run(
         per_question_scores=per_question,
         category_scores=category_scores,
         fingerprint_available=run.fingerprint is not None,
+        baseline_run_id=run.baseline_run_id,
+        completion=run.completion,
+        provenance=run.provenance,
+        evaluation_errors=run.evaluation_errors or [],
+        error_message=run.error_message,
     )
 
 
@@ -120,38 +125,20 @@ async def get_fingerprint(
     run = await get_run_by_id(db, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
-    if run.status not in (RunStatus.COMPLETE, RunStatus.FAILED):
+    if run.status == RunStatus.FAILED:
+        raise HTTPException(status_code=409, detail="Evaluation failed; a regression comparison cannot pass. Inspect run errors.")
+    if run.status != RunStatus.COMPLETE:
         raise HTTPException(status_code=425, detail="Run not yet completed")
 
     fp = await get_fingerprint_by_run(db, run_id)
     if fp is None:
-        raise HTTPException(
-            status_code=204,
-            detail="No regression fingerprint for this run (no regression detected or no baseline available)",
-        )
-
-    # Rebuild Pydantic model from stored JSON
-    regressions = [
-        CategoryRegression(
-            category=r["category"],
-            metric=r["metric"],
-            baseline_score=r["baseline_score"],
-            current_score=r["current_score"],
-            delta=r["delta"],
-            severity=r["severity"],
-            attributed_to=FailingComponent(r["attributed_to"]),
-            evidence=r["evidence"],
-            suggested_fix=r["suggested_fix"],
-        )
-        for r in (fp.regressions or [])
-    ]
-
-    return FingerprintReport(
-        run_id=fp.run_id,
-        baseline_run_id=fp.baseline_run_id,
-        overall_regressed=fp.overall_regressed,
-        regressions=regressions,
-        top_failing_component=FailingComponent(fp.top_failing_component),
-        summary=fp.summary,
-        action_items=fp.action_items or [],
-    )
+        raise HTTPException(status_code=409, detail="No validated comparison report is available. Inspect run status and errors; this cannot pass the quality gate.")
+    try:
+        report = FingerprintReport.model_validate(fp.report)
+        if str(report.run_id) != run_id or report.completion.model_dump() != run.completion or report.provenance.model_dump(mode="json") != run.provenance:
+            raise ValueError("Report identity, completion or provenance differs from the run")
+        if report.baseline_run_id != run.baseline_run_id or run.passed != report.gate_passed:
+            raise ValueError("Report baseline or gate decision differs from the run")
+        return report
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=f"Stored evaluation report is invalid: {exc}") from exc

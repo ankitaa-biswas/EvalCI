@@ -68,10 +68,10 @@ jobs:
             STATUS=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
             PCT=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('progress_pct') or 0)")
             echo "  [${ATTEMPT}/${MAX_ATTEMPTS}] Status=${STATUS}  Progress=${PCT}%"
-            if [ "$STATUS" = "COMPLETE" ]; then
+            if [ "$STATUS" = "complete" ]; then
               echo "✅ Evaluation complete."
               exit 0
-            elif [ "$STATUS" = "FAILED" ]; then
+            elif [ "$STATUS" = "failed" ]; then
               ERR=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error_message','unknown'))")
               echo "❌ Evaluation FAILED: $ERR"
               exit 1
@@ -105,7 +105,7 @@ jobs:
           print(f'Overall score: {score:.1%}  Passed: {passed}')
           "
 
-      - name: Download fingerprint report (if available)
+      - name: Download required fingerprint report
         env:
           RUN_ID: ${{ needs.trigger-eval.outputs.run_id }}
         run: |
@@ -121,8 +121,8 @@ jobs:
           print('Regressed categories:', len(fp.get('regressions', [])))
             "
           else
-            echo "ℹ️  No regression fingerprint for this run (HTTP $HTTP_CODE)."
-            echo '{}' > fingerprint_report.json
+            echo "Required fingerprint report unavailable (HTTP $HTTP_CODE)."
+            exit 1
           fi
 
       - name: Upload evaluation artifacts
@@ -138,44 +138,31 @@ jobs:
   quality-gate:
     name: Quality Gate
     runs-on: ubuntu-latest
-    needs: fetch-results
+    needs: [fetch-results, trigger-eval]
 
     steps:
+      - name: Checkout report validator
+        uses: actions/checkout@v4
+
+      - name: Set up report validation
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install report validation dependency
+        run: python -m pip install 'pydantic>=2.7,<3'
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           name: evalci-results-${{ github.sha }}
 
-      - name: Check for HIGH-severity regressions
-        id: gate
-        run: |
-          python3 - << 'EOF'
-          import json, sys
-
-          with open('fingerprint_report.json') as f:
-              fp = json.load(f)
-
-          if not fp.get('overall_regressed'):
-              print("✅ No regressions detected. Quality gate passed.")
-              sys.exit(0)
-
-          regressions = fp.get('regressions', [])
-          high = [r for r in regressions if r.get('severity') == 'HIGH']
-
-          print(f"⚠️  {len(regressions)} regression(s) detected.")
-          for r in regressions:
-              sev = r.get('severity', '?')
-              cat = r.get('category', '?')
-              delta = r.get('delta', 0)
-              comp = r.get('attributed_to', '?')
-              print(f"  [{sev}] {cat}: delta={delta:+.3f}  → {comp}")
-
-          if high:
-              print(f"\n❌ {len(high)} HIGH-severity regression(s) found. Failing CI.")
-              sys.exit(1)
-          else:
-              print("\n✅ No HIGH-severity regressions. Quality gate passed (MEDIUM/LOW regressions noted).")
-          EOF
+      # Cycle 1: consume the same validated contract as the worker and API.
+      - name: Validate complete regression report and required quality thresholds
+        env:
+          RUN_ID: ${{ needs.trigger-eval.outputs.run_id }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: python -m core.gate fingerprint_report.json --run-id "$RUN_ID" --commit-sha "$COMMIT_SHA"
 
       - name: Post fingerprint comment to PR
         if: github.event_name == 'pull_request'

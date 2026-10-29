@@ -1,272 +1,113 @@
-# EvalCI — Evaluation & Regression Testing Harness for RAG Systems
+# EvalCI
 
-> **Automatically test your RAG pipeline on every Git push. Score it. Fingerprint what broke. Ship with confidence.**
+EvalCI evaluates RAG answers and supports regression investigation and release decisions. The fixed evaluation dataset contains **50 questions across 11 categories** in `tests/test_suite.json` and `tests/categories.json`.
 
-[![CI](https://github.com/ankitaa-biswas/evalci/actions/workflows/evalci.yml/badge.svg)](https://github.com/ankitaa-biswas/evalci/actions)
-[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://python.org)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.111-green)](https://fastapi.tiangolo.com)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+The current work implements **Cycle 1 only: evaluation and regression decision correctness**. Containerizing the complete stack, incremental SSE and the complete CI/CD workflow remain pending. See [the verification record](docs/cycle1-verification.md) for implemented, verified and externally configured functionality.
 
----
+## Evaluation contract
 
-## What is EvalCI?
+`core/reports.py::FingerprintReport` is the versioned contract used by fingerprint computation, persistence, the results API and `python -m core.gate`. A successful comparison always saves a report, including when no regression occurs. The optional legacy route modules re-use this contract; the application registers `/evaluate`, `/results` and `/stream`.
 
-EvalCI is a **continuous integration harness for Retrieval-Augmented Generation (RAG) systems**. Every time code is pushed to GitHub, EvalCI automatically:
+Every category has signed `current - baseline` comparisons for correctness, groundedness, context recall, context precision and derived hallucination risk (`1 - groundedness`). Higher is better for the first four; lower is better for hallucination risk. Hallucination risk and groundedness are dependent signals, so their regression entries must not be interpreted as independent evidence.
 
-1. **Queries your RAG system** with a curated set of 50 test questions across 10 categories.
-2. **Scores each answer** using the [Ragas](https://docs.ragas.io) library on three axes — correctness, grounding (faithfulness), and hallucination risk.
-3. **Detects regressions** by comparing scores against a baseline run.
-4. **Generates a Regression Fingerprint Report** — EvalCI's core novel output — that identifies *which* question categories degraded and attributes the failure to the *retriever* or the *generator*.
-5. **Fails the CI pipeline** if a HIGH-severity regression is detected, preventing degraded RAG code from reaching production.
+| Direction-adjusted absolute loss | Severity | Regression gate |
+| --- | --- | --- |
+| Less than 0.02, unchanged or improving | NONE | Allowed |
+| 0.02 up to but excluding 0.05 | LOW | Recorded, allowed |
+| 0.05 up to but excluding 0.15 | MEDIUM | Recorded, allowed |
+| 0.15 or greater | HIGH | Failed |
 
----
+Boundaries are inclusive at 0.02, 0.05 and 0.15. These are absolute score differences, not relative percentages. Signed deltas are rounded to 12 decimal places before classification to avoid floating-point boundary artifacts. The old `regression_thresholds` metadata in `categories.json` is retained for dataset integrity; `core/reports.py` and the persisted configuration define this policy. In particular, LOW now explicitly starts at 0.02.
 
-## The Problem EvalCI Solves
+The gate also requires a completed comparison and all absolute quality checks: per-category thresholds and global thresholds from `categories.json`, plus `PASS_THRESHOLD` for overall correctness (default 0.70). Threshold equality passes. Missing, malformed, non-finite, boolean, nonnumeric or out-of-range metrics cannot become valid scores. Missing/malformed reports, missing baselines, scoring/request failures and incomplete evaluations fail closed.
 
-RAG systems have two distinct components that can independently break:
+Runs retain expected, attempted, successfully scored and failed counts, plus question-level stage/error records. Completed reports require all expected questions to have been attempted and successfully scored, with zero failures. A failed evaluation saves its accounting and errors and is not eligible to supply a comparison report. Successfully scored rows from an incomplete batch are counted but are not persisted as a completed result set. Counts are saved after the scoring batch, not streamed incrementally; a killed worker can leave an unfinished run requiring investigation.
 
-| Component | Failure Mode | Traditional CI Detection |
-|-----------|-------------|--------------------------|
-| **Retriever** | Wrong chunks fetched, embedding drift, index staleness |  Not detected |
-| **Generator** | Hallucination, prompt template regression, model version change |  Not detected |
+## Attribution rules
 
-Standard test suites check *that* quality dropped. They cannot tell you *why* or *which component* to fix. A developer staring at a dashboard showing "correctness dropped from 0.82 to 0.71" has no idea whether to look at ChromaDB, the prompt template, or the LLM model version.
+The report provides category-specific metric evidence and investigation steps. Retrieval loss is the larger recall/precision loss. Generation loss is the larger groundedness/correctness loss.
 
-**EvalCI solves this with the Regression Fingerprint.**
+- Retrieval loss of at least 0.02 supports retriever investigation.
+- Generation loss of at least 0.02 with stable retrieval supports generator investigation.
+- When retrieval also drops, generation loss exceeding retrieval loss by at least 0.05 supports mixed investigation. Retrieval loss can propagate into answer metrics, so this rule does not establish separate causes.
+- A regression without either signal is inconclusive. Conflicting category signals can also produce an inconclusive overall attribution.
+- Unchanged, improving and below-threshold comparisons have no failure attribution and zero attribution weights.
 
----
+Signal strengths are normalized into **heuristic weights**, not calibrated probabilities. No prompt-versus-knowledge-base causal distinction or live attribution accuracy is claimed. The tests use synthetic metric patterns and mocked scoring.
 
-##  The Regression Fingerprint — EvalCI's Core Innovation
+## Baselines and provenance
 
-The **Regression Fingerprint Report** is a structured diagnostic document generated whenever an evaluation run scores lower than the baseline. It answers two questions no existing RAG eval tool automates:
+There is no automatic latest-run fallback. Every request must contain exactly one of `baseline_run_id` or `baseline_bootstrap: true`. Selection is checked both before dispatch and in the worker. Self-comparison, missing/failed/incomplete baselines and incompatible datasets/configurations are rejected. Baselines require complete persisted question/category coverage and a validated quality-passing report. Previously compared baselines must also have passed their regression gate.
 
-### Question 1: Which categories regressed?
+Provenance includes a SHA-256 digest of canonical question JSON, the exact evaluation configuration and its digest, judge and embedding model names, temperature, Ragas and relevant scoring dependency versions, provider base-URL digest, metric set, category counts, quality/severity thresholds, request timeout, target endpoint and supplied commit SHA. API/worker settings and dataset must match between dispatch and execution. Endpoint and commit are recorded separately from compatibility settings so changed RAG targets/revisions can be compared. Commit metadata alone does not prove which code a remote target serves; that is deferred to Cycle 3.
 
-EvalCI groups the 50 test questions into 10 semantic categories (factual recall, multi-hop reasoning, definition lookup, causal reasoning, etc.). When scores drop, the fingerprint identifies *exactly* which categories were affected — giving developers a surgical view rather than a blunt overall score.
+For the first baseline:
 
-### Question 2: Was it the Retriever or the Generator?
+1. Submit `baseline_bootstrap: true` with a working HTTP RAG endpoint.
+2. Require a complete run and inspect the results, question outputs, configuration and `quality_passed` in its report.
+3. Explicitly select that reviewed run ID in future requests. Bootstrap is never selected automatically and **never passes the regression gate** (`passed=false`, `comparison_status=bootstrap`). A bootstrap that fails absolute quality is ineligible as a baseline.
+4. Bootstrap again deliberately when the dataset or evaluation configuration changes. Legacy rows without canonical provenance/reports cannot serve as baselines.
 
-This is the novel attribution step. The Fingerprinter examines the **divergence pattern between `grounding` (faithfulness) and `correctness`** metrics:
+## Local setup for Cycle 1
 
-```
-┌──────────────────────────┬─────────────────┬──────────────────────────────┐
-│ Grounding Delta          │ Correctness Δ   │ Attribution                  │
-├──────────────────────────┼─────────────────┼──────────────────────────────┤
-│ Dropped ≥ 0.05           │ Also dropped    │ RETRIEVER — bad chunks       │
-│                          │                 │ propagate to bad answers     │
-├──────────────────────────┼─────────────────┼──────────────────────────────┤
-│ Stable (< 0.05 drop)     │ Dropped         │ GENERATOR — model ignoring   │
-│                          │                 │ good context                 │
-├──────────────────────────┼─────────────────┼──────────────────────────────┤
-│ Dropped ≥ 0.05           │ Stable/High     │ BOTH — fragile lucky correct │
-│                          │                 │ answers on bad retrieval     │
-├──────────────────────────┼─────────────────┼──────────────────────────────┤
-│ Stable                   │ Stable          │ No regression                │
-└──────────────────────────┴─────────────────┴──────────────────────────────┘
-```
+From the repository directory, install `requirements.txt` and `requirements-test.txt` in a Python 3.11+ virtual environment. Configure the following in both API and worker processes; environment files are not automatically loaded by these commands:
 
-`context_recall` and `context_precision` serve as confirming signals:
-- If `context_recall` also drops → **confirms retriever** (failing to fetch relevant chunks)
-- If `context_precision` drops but `recall` is stable → **noisy retrieval** (fetching irrelevant chunks)
+| Setting | Purpose |
+| --- | --- |
+| `DATABASE_URL` | SQLAlchemy async PostgreSQL URL, `postgresql+asyncpg://...` |
+| `REDIS_URL` | Celery broker and terminal-event pub/sub |
+| `OPENAI_API_KEY` | Credentials for OpenAI-compatible Ragas judge/embeddings |
+| `EVAL_JUDGE_MODEL` | Explicit supported judge model name; no implicit default |
+| `EVAL_EMBEDDING_MODEL` | Explicit supported embedding model name; no implicit default |
+| `OPENAI_API_BASE` or `OPENAI_BASE_URL` | Optional compatible provider URL; `OPENAI_API_BASE` takes precedence |
+| `EVALCI_API_KEYS` | Comma-separated API keys; requests use `X-API-Key` |
+| `PASS_THRESHOLD` | Optional overall correctness threshold, default 0.70 |
 
-The result is a concrete, actionable report like:
+Judge/embedding configuration uses the existing Ragas 0.1.x interface and OpenAI-compatible LangChain clients. Other providers require a separate adapter. No live model request was made during Cycle 1 verification.
 
-> *"EvalCI detected HIGH-severity regressions in `factual_recall` and `definition_lookup` categories. Attribution: RETRIEVER. Grounding dropped 0.13 and context_recall dropped 0.11, while correctness followed at -0.14. Recommended actions: (1) URGENT: Block this PR. (2) Verify ChromaDB collection was re-indexed with the latest documents. (3) Check embedding model version hasn't changed."*
-
-### Why this is novel
-
-No existing production RAG evaluation tool (including bare Ragas, TruLens, RAGAS-CI integrations, or DeepEval) performs **automated per-category, component-attributed regression fingerprinting**. They report aggregate scores; EvalCI tells you what to fix.
-
----
-
-## Tech Stack
-
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| **API** | FastAPI + Uvicorn | REST endpoints + SSE streaming |
-| **Background Jobs** | Celery + Redis | Async evaluation runs |
-| **Database** | PostgreSQL + SQLAlchemy 2.0 (async) | Result persistence |
-| **Cache** | Redis | Score caching by commit SHA |
-| **Scoring** | Ragas | correctness, faithfulness, context_recall, context_precision |
-| **Vector DB** | ChromaDB | RAG document retrieval target |
-| **LLM** | Google Gemini 1.5 Flash | RAG generation + Ragas judge |
-| **Streaming** | Server-Sent Events (SSE) | Live dashboard updates |
-| **CI** | GitHub Actions | Automated trigger + quality gate |
-| **Frontend** | Plain HTML + JavaScript | Real-time evaluation dashboard |
-| **Dev Infra** | Docker Compose | Local PostgreSQL + Redis + ChromaDB |
-
----
-
-## Project Structure
-
-```
-evalci/
-├── api/                          # FastAPI application layer
-│   ├── main.py                   # App entry point, middleware, route registration
-│   ├── routes/
-│   │   ├── evaluate.py           # POST /evaluate — trigger a run
-│   │   ├── results.py            # GET /results — fetch run history + fingerprints
-│   │   └── stream.py             # GET /stream/{run_id} — SSE live updates
-│   └── models/
-│       ├── run.py                # Pydantic models: EvalRunRequest, EvalRunResponse
-│       └── score.py              # Pydantic models: QuestionScore, FingerprintReport
-│
-├── core/                         # Business logic
-│   ├── evaluator.py              # Ragas scoring orchestration
-│   ├── fingerprinter.py          # ★ NOVEL: Regression Fingerprint algorithm
-│   ├── cache.py                  # Redis score caching + SSE pub/sub
-│   └── queue.py                  # Celery task definitions
-│
-├── db/                           # Database layer
-│   ├── database.py               # SQLAlchemy async engine + session factory
-│   ├── models.py                 # ORM tables: EvalRun, QuestionScore, CategoryScore, FingerprintReport
-│   └── crud.py                   # All DB read/write operations
-│
-├── rag_target/                   # The RAG system being evaluated
-│   ├── ingest.py                 # Load documents into ChromaDB
-│   ├── query.py                  # Query ChromaDB + generate answer via LLM
-│   └── sample_docs/              # Knowledge base documents for testing
-│
-├── tests/
-│   ├── test_suite.json           # 50 questions + ground-truth answers (10 categories)
-│   └── categories.json           # Category definitions + per-category thresholds
-│
-├── dashboard/
-│   ├── index.html                # Main evaluation dashboard UI
-│   └── stream.js                 # SSE client (SSEClient class + event handlers)
-│
-├── .github/
-│   └── workflows/
-│       └── evalci.yml            # CI: trigger → poll → fetch results → quality gate
-│
-├── docker-compose.yml            # PostgreSQL + Redis + ChromaDB + Flower
-├── requirements.txt              # All Python dependencies
-├── .env.example                  # Environment variable template
-└── README.md                     # This file
-```
-
----
-
-## Quick Start
-
-### 1. Prerequisites
-
-- Python 3.11+
-- Docker + Docker Compose
-- OpenAI API key
-
-### 2. Clone and install
+Start existing PostgreSQL and Redis infrastructure (the existing Compose file still provides infrastructure only), then migrate and run separate processes:
 
 ```bash
-git clone https://github.com/ankitaa-biswas/evalci.git
-cd evalci
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-### 3. Configure environment
-
-```bash
-cp .env.example .env
-# Edit .env — set GOOGLE_API_KEY, EVALCI_API_KEYS, DATABASE_URL, REDIS_URL at minimum
-```
-
-### 4. Start infrastructure
-
-```bash
-docker compose up -d
-```
-
-### 5. Ingest sample documents
-
-```bash
-python -m rag_target.ingest
-```
-
-### 6. Start the API server
-
-```bash
-uvicorn api.main:app --reload --port 8080
-```
-
-### 7. Start the Celery worker
-
-```bash
+alembic upgrade head
+uvicorn api.main:app --port 8080
+# In a second configured terminal:
 celery -A core.queue.celery_app worker --loglevel=info --concurrency=2
 ```
 
-### 8. Trigger an evaluation
+The Cycle 1 migration handles fresh databases and existing evaluation tables while preserving legacy data. Old timestamps without timezone are interpreted as UTC. Back up a database before upgrading. Its automatic downgrade is deliberately disabled to avoid discarding evaluation data. Startup creates missing tables for development but cannot add columns to existing tables; run the migration before upgrading the application.
+
+Supply a separately running HTTP RAG service with `POST {"query": "..."}` returning `{"answer": "...", "retrieved_chunks": ["..."]}` (`contexts` is also accepted). The existing `rag_target` helpers do not expose a query HTTP server yet.
+
+Example first-baseline request (replace the endpoint and header with your own configuration):
 
 ```bash
-curl -X POST http://localhost:8080/evaluate \
-  -H "Content-Type: application/json" \
-  -d '{
-    "commit_sha": "'"$(git rev-parse HEAD)"'",
-    "branch": "main",
-    "triggered_by": "manual"
-  }'
+curl --fail-with-body http://localhost:8080/evaluate/ \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: YOUR_API_KEY' \
+  -d '{"commit_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","branch":"main","rag_endpoint":"http://localhost:8001/query","baseline_bootstrap":true}'
 ```
 
-### 9. View the dashboard
+For a comparison, replace `baseline_bootstrap` with `baseline_run_id` containing the reviewed run UUID. Poll `/evaluate/{run_id}/status`; statuses are `pending`, `running`, `complete`, `failed`. Fetch `/results/{run_id}` for scores, completion, provenance and errors. Fetch `/results/{run_id}/fingerprint` for the required canonical report. An unavailable report returns an error, never an empty success response.
 
-Open `http://localhost:8080/dashboard` in your browser.
+```bash
+python -m core.gate fingerprint_report.json --run-id RUN_UUID --commit-sha TESTED_COMMIT_SHA
+```
 
----
+The existing workflow now consumes this same gate and rejects unavailable fingerprint responses. Its endpoint/baseline/authentication request configuration, revision isolation, full push triggers, delivery and external branch protection remain **pending Cycle 3**. It is not yet a proven CI/CD pipeline.
 
-## API Reference
+## Checks
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/evaluate` | Trigger a new evaluation run |
-| `GET` | `/evaluate/{run_id}/status` | Poll run status (PENDING/RUNNING/COMPLETE/FAILED) |
-| `GET` | `/results` | List all historical runs (paginated) |
-| `GET` | `/results/{run_id}` | Full result payload for a run |
-| `GET` | `/results/{run_id}/fingerprint` | Regression Fingerprint Report |
-| `GET` | `/stream/{run_id}` | SSE stream of live score events |
-| `GET` | `/health` | Liveness probe |
+```bash
+python -m pytest -q
+python -m compileall -q api core db
+git diff --check
+```
 
----
+By default the persistence/API tests use real SQLite. To use an **isolated test PostgreSQL database** with schema-creation privileges:
 
-## GitHub Actions Integration
+```bash
+EVALCI_TEST_DATABASE_URL='postgresql+asyncpg://TEST_USER:TEST_PASSWORD@localhost/TEST_DATABASE' \
+  python -m pytest -q
+```
 
-Add these secrets to your repository (`Settings → Secrets and variables → Actions`):
-
-| Secret | Value |
-|--------|-------|
-| `EVALCI_API_URL` | Your deployed EvalCI API URL |
-| `EVALCI_API_KEYS` | Bearer token for API authentication |
-| `GOOGLE_API_KEY` | Gemini API key for scoring and diagnosis |
-
-The workflow (`.github/workflows/evalci.yml`) runs on every push to `main` and every pull request. It:
-1. Triggers an evaluation via `POST /evaluate`
-2. Polls for completion (up to 20 minutes)
-3. Downloads the Regression Fingerprint Report
-4. Posts a summary comment to the PR
-5. **Fails the job** if any category has a HIGH-severity regression
-
----
-
-## Evaluation Metrics
-
-EvalCI uses four Ragas metrics:
-
-| Metric | What it measures | Primary use |
-|--------|------------------|------------|
-| `answer_correctness` | Semantic similarity to ground truth | Overall quality |
-| `faithfulness` (grounding) | Is the answer supported by retrieved context? | Retriever/Generator split |
-| `context_recall` | Did retrieval cover the ground-truth information? | Retriever diagnosis |
-| `context_precision` | Are retrieved chunks relevant (low noise)? | Retriever diagnosis |
-
-`hallucination_risk = 1 - faithfulness` is derived and reported alongside.
-
----
-
-
-
-## License
-
-MIT — see [LICENSE](LICENSE).
-
----
-
-*EvalCI was designed to give RAG developers the same regression visibility that unit tests give application developers — but for the non-deterministic, multi-component world of retrieval-augmented AI.*
+The PostgreSQL mode creates and drops only uniquely named test schemas. It also checks fresh and legacy migrations. HTTP responses, model scoring and terminal event publication are mocked; the worker coroutine, SQLAlchemy persistence, report validation and API handlers execute together. Redis, a Celery worker process, the complete HTTP server/middleware lifecycle, live LLM attribution accuracy, GitHub Actions and deployment are not verified by these tests.

@@ -8,8 +8,8 @@ Covers:
   - HeatmapBuilder category grouping
   - FailureClusterer small-dataset fast-path (< 3 questions → trivial clusters)
 
-All external dependencies (LLM, HTTP, Redis, sentence-transformers) are mocked
-so these tests run fully offline with no real API calls.
+These are synthetic unit tests with no external calls. Heavy clustering
+paths are not exercised. They do not measure live attribution accuracy.
 """
 
 from __future__ import annotations
@@ -20,36 +20,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
-# ---------------------------------------------------------------------------
-# Lightweight stubs for heavy optional dependencies
-# ---------------------------------------------------------------------------
-# Prevent ImportError when sentence_transformers / sklearn / torch are absent
-# from the test environment.  The clusterer uses lazy imports, so patching the
-# top-level module namespace is sufficient.
-
-def _install_stub(name: str, **attrs) -> MagicMock:
-    """Install a MagicMock as sys.modules[name] if not already present."""
-    if name not in sys.modules:
-        mod = MagicMock()
-        for k, v in attrs.items():
-            setattr(mod, k, v)
-        sys.modules[name] = mod
-    return sys.modules[name]
-
-
-_install_stub("sentence_transformers")
-_install_stub("sklearn")
-_install_stub("sklearn.cluster")
-_install_stub("redis")
-_install_stub("celery")
-_install_stub("ragas")
-_install_stub("httpx")
-
-
-# ---------------------------------------------------------------------------
-# Imports under test — after stubs are in place
-# ---------------------------------------------------------------------------
 
 from core.fingerprinter import RegressionFingerprinter  # noqa: E402
 from core.heatmap import HeatmapBuilder                 # noqa: E402
@@ -229,11 +199,12 @@ class TestFingerprintNoRegression:
                 f"got {delta:.4f}"
             )
 
-    def test_attribution_sums_to_one(self, fingerprinter):
-        """Normalization invariant: attribution weights always sum to 1.0."""
+    def test_no_failure_attribution(self, fingerprinter):
+        """Unchanged/improving metrics have no failure attribution."""
         result = fingerprinter.compute(self.BASELINE, self.CURRENT)
         total = sum(result["attribution"].values())
-        assert total == pytest.approx(1.0, abs=1e-9)
+        assert total == 0.0
+        assert result["dominant_failure"] is None
 
 
 # ===========================================================================

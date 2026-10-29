@@ -8,16 +8,16 @@ from enum import Enum
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, model_validator
 
 
 class RunStatus(str, Enum):
     """Possible lifecycle states of an evaluation run."""
 
-    PENDING = "PENDING"
-    RUNNING = "RUNNING"
-    COMPLETE = "COMPLETE"
-    FAILED = "FAILED"
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETE = "complete"
+    FAILED = "failed"
 
 
 # ---------------------------------------------------------------------------
@@ -37,9 +37,8 @@ class EvalRunRequest(BaseModel):
         question_set_path: Optional override path to a custom question JSON
             file; defaults to ``tests/test_suite.json``.
         baseline_run_id: Optional UUID of a previous run to compare against
-            for regression fingerprinting.  If omitted, the system will use
-            the last successful run on ``main``.
-        rag_endpoint: Optional override URL of the RAG system to query.
+            for regression fingerprinting.  Required except for an explicit baseline bootstrap.
+        rag_endpoint: Required URL of the RAG system to query.
             Useful for evaluating a feature-branch deployment.
     """
 
@@ -48,14 +47,22 @@ class EvalRunRequest(BaseModel):
     triggered_by: str = Field(default="github-actions")
     question_set_path: Optional[str] = Field(default=None)
     baseline_run_id: Optional[UUID] = Field(default=None)
-    rag_endpoint: Optional[HttpUrl] = Field(default=None)
+    rag_endpoint: HttpUrl = Field(..., description="Required HTTP(S) RAG query URL; no implicit endpoint.")
+    baseline_bootstrap: bool = Field(default=False, strict=True)
+
+    @model_validator(mode="after")
+    def baseline_mode(self):
+        if self.baseline_bootstrap == (self.baseline_run_id is not None):
+            raise ValueError("Supply exactly one of baseline_run_id or baseline_bootstrap=true. Bootstrap never passes the regression gate.")
+        return self
 
     model_config = {"json_schema_extra": {"examples": [{
         "commit_sha": "a" * 40,
         "branch": "feat/new-retriever",
         "triggered_by": "github-actions",
         "baseline_run_id": None,
-        "rag_endpoint": None,
+        "rag_endpoint": "http://localhost:8001/query",
+        "baseline_bootstrap": True,
     }]}}
 
 
@@ -117,3 +124,7 @@ class EvalRunDetail(EvalRunSummary):
     category_scores: dict = Field(default_factory=dict)
     baseline_run_id: Optional[UUID] = None
     fingerprint_available: bool = False
+    completion: dict | None = None
+    provenance: dict | None = None
+    evaluation_errors: list[dict] = Field(default_factory=list)
+    error_message: str | None = None

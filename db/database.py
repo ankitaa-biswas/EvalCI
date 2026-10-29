@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.orm import DeclarativeBase
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
@@ -19,15 +18,7 @@ DATABASE_URL = os.getenv(
 )
 
 
-class Base(DeclarativeBase):
-    """
-    SQLAlchemy declarative base class.
-
-    All ORM model classes in ``db/models.py`` inherit from this base.
-    ``Base.metadata.create_all()`` is called on startup to initialise tables.
-    """
-
-    pass
+from db.models import Base
 
 
 # Async engine — uses asyncpg driver for non-blocking DB I/O
