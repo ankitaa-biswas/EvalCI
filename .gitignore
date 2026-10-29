@@ -46,3 +46,7 @@ artifacts/
 
 # Temporary baseline source staging for isolated CI builds
 .evalci-build-*/
+
+# Local documentation: keep out of Git and GitHub
+/docs/
+/doc/

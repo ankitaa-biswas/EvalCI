@@ -2,7 +2,7 @@
 
 EvalCI evaluates RAG answers and supports regression investigation and release decisions. The fixed evaluation dataset contains **50 questions across 11 categories** in `tests/test_suite.json` and `tests/categories.json`.
 
-The current work implements **Cycles 1–3**: evaluation decision correctness, the complete container stack, durable incremental progress, and revision-bound CI/CD. The workflow is locally verified; GitHub Actions execution, required merge checks, live model evaluation and registry publication remain external setup. See the [Cycle 1](docs/cycle1-verification.md), [Cycle 2](docs/cycle2-verification.md) and [Cycle 3](docs/cycle3-verification.md) records, and the [exact external setup](docs/external-setup.md).
+The current work implements **Cycles 1–3**: evaluation decision correctness, the complete container stack, durable incremental progress, and revision-bound CI/CD. The workflow is locally verified; GitHub Actions execution, required merge checks, live model evaluation and registry publication remain external setup.
 
 ## Evaluation contract
 
@@ -168,7 +168,7 @@ The verification records distinguish local execution from external configuration
 
 The workflow runs on every branch push and PR. Its stable **Quality Gate** aggregates required jobs and fails closed on failed/cancelled checks. PRs evaluate GitHub's checked-out merge revision. The runner builds candidate and baseline RAG source with the same current harness and locked dependencies, checks source digests inside running containers, and uses private authentication plus isolated Compose networks/volumes with no published ports. Evidence includes raw results, fingerprints, completion counts, configuration, baseline/candidate SHAs, source hashes and image IDs. Artifacts retain successfully tested images for delivery without rebuilding.
 
-The default gate uses synthetic fixture scoring. Live evaluation is separately opt-in and can be required; delivery additionally requires successful live evaluation of exactly the same image bytes. Delivery prepares a versioned GHCR image; it does not deploy an application. Merge protection and protected environments need the [external setup](docs/external-setup.md). Neither remote execution nor publication is claimed from YAML.
+The default gate uses synthetic fixture scoring. Live evaluation is separately opt-in and can be required; delivery additionally requires successful live evaluation of exactly the same image bytes. Delivery prepares a versioned GHCR image; it does not deploy an application. Merge protection and protected environments require repository administrator configuration. Neither remote execution nor publication is claimed from YAML.
 
 With Docker, Git and host Python runtime dependencies installed, run the complete local proof from an uncommitted working tree:
 
@@ -186,4 +186,4 @@ python -m scripts.ci --candidate-sha <checked-out-full-sha> \
   --output artifacts/ci-local --archive-images
 ```
 
-`--allow-dirty` is diagnostics only and cannot produce a release image bundle. See [Cycle 3 verification and claim-to-evidence table](docs/cycle3-verification.md) and the [evidence-supported resume bullets](docs/resume-items.tex).
+`--allow-dirty` is diagnostics only and cannot produce a release image bundle.
