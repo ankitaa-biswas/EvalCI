@@ -40,7 +40,7 @@ def load_evaluation(question_set_path, commit_sha, rag_endpoint):
     if not judge or not embedding:
         raise ValueError("Set EVAL_JUDGE_MODEL and EVAL_EMBEDDING_MODEL explicitly on both API and worker (OpenAI-compatible Ragas scoring).")
     # A provider URL may include credentials; persist only a digest of it.
-    config = {"contract_version": 2, "scoring_mode": mode, "scoring_batch_size": batch_size,
+    config = {"contract_version": 3, "fixture_contract_version": 2, "scoring_mode": mode, "scoring_batch_size": batch_size,
         "scoring_timeout_seconds": 180, "scoring_max_retries": 2, "ragas_version": version("ragas"), "judge_model": judge,
         "embedding_model": embedding, "temperature": 0, "metrics": list(METRICS),
         "provider_base_url_sha256": digest(provider_base_url()),

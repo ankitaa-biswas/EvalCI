@@ -2,7 +2,7 @@
 
 EvalCI evaluates RAG answers and supports regression investigation and release decisions. The fixed evaluation dataset contains **50 questions across 11 categories** in `tests/test_suite.json` and `tests/categories.json`.
 
-The current work implements **Cycles 1 and 2**: evaluation decision correctness, the complete local container stack, and durable incremental progress. The complete CI/CD workflow remains pending Cycle 3. See the [Cycle 1 record](docs/cycle1-verification.md) and [Cycle 2 record](docs/cycle2-verification.md) for implementation, execution evidence and external configuration.
+The current work implements **Cycles 1–3**: evaluation decision correctness, the complete container stack, durable incremental progress, and revision-bound CI/CD. The workflow is locally verified; GitHub Actions execution, required merge checks, live model evaluation and registry publication remain external setup. See the [Cycle 1](docs/cycle1-verification.md), [Cycle 2](docs/cycle2-verification.md) and [Cycle 3](docs/cycle3-verification.md) records, and the [exact external setup](docs/external-setup.md).
 
 ## Evaluation contract
 
@@ -39,7 +39,7 @@ Signal strengths are normalized into **heuristic weights**, not calibrated proba
 
 There is no automatic latest-run fallback. Every request must contain exactly one of `baseline_run_id` or `baseline_bootstrap: true`. Selection is checked both before dispatch and in the worker. Self-comparison, missing/failed/incomplete baselines and incompatible datasets/configurations are rejected. Baselines require complete persisted question/category coverage and a validated quality-passing report. Previously compared baselines must also have passed their regression gate.
 
-Provenance includes a SHA-256 digest of canonical question JSON, the exact evaluation configuration and its digest, scoring mode and batch size, judge and embedding model names, temperature, Ragas and relevant scoring dependency versions, provider base-URL digest, metric set, category counts, quality/severity thresholds, request timeout, target endpoint and supplied commit SHA. API/worker settings and dataset must match between dispatch and execution. Endpoint and commit are recorded separately from compatibility settings so changed RAG targets/revisions can be compared. Commit metadata alone does not prove which code a remote target serves; that is deferred to Cycle 3.
+Provenance includes a SHA-256 digest of canonical question JSON, the exact evaluation configuration and its digest, scoring mode and batch size, judge and embedding model names, temperature, Ragas and relevant scoring dependency versions, provider base-URL digest, metric set, category counts, quality/severity thresholds, request timeout, target endpoint and supplied commit SHA. API/worker settings and dataset must match between dispatch and execution. Endpoint and commit are recorded separately from compatibility settings so changed RAG targets/revisions can be compared. Commit metadata alone does not prove which code an arbitrary remote target serves. The Cycle 3 CI runner instead builds selected Git RAG trees and verifies source digests and running image identities.
 
 For the first baseline:
 
@@ -73,7 +73,7 @@ The first build installs the full pinned runtime. The default services are Postg
 
 Open `http://localhost:8080/dashboard/` and enter the API key from your private `.env.local`. The page is public; all evaluation data and streams require the API key. The key remains in that tab's memory and is sent in `X-API-Key`, including streaming requests. It is not stored in a URL, cookie or browser storage.
 
-The fixture target uses deterministic hash embeddings with real Chroma retrieval and returns a retrieved passage. The fixture scorer returns fixed scores to test transport, accounting and persistence. **Fixture scores are not live quality validation or attribution-accuracy evidence.** Mode is recorded in report provenance and displayed by the dashboard; fixture/live baselines are incompatible.
+The fixture target uses deterministic hash embeddings with real Chroma retrieval and returns a retrieved passage. The synthetic fixture scorer checks an explicit first-passage-copy contract to test transport, accounting, persistence and regression decisions. It is not a semantic-quality judge. **Fixture scores are not live quality validation or attribution-accuracy evidence.** Mode is recorded in report provenance and displayed by the dashboard; fixture/live baselines are incompatible.
 
 The verifier is included in the image so host Python dependencies are unnecessary:
 
@@ -87,7 +87,7 @@ docker compose --project-name evalci-demo --env-file .env.local \
   -f docker-compose.yml -f docker-compose.fixture.yml cp api:/tmp/cycle2-evidence artifacts/cycle2
 ```
 
-It submits all 50 questions through the actual API and Celery worker, bootstraps a fixture baseline, compares a second run, checks authenticated SSE delivery during both stages, reconnect/late replay, persisted API results and an unavailable-endpoint failure. Supplied commit SHA is metadata; revision-isolated CI validation remains Cycle 3.
+It submits all 50 questions through the actual API and Celery worker, bootstraps a fixture baseline, compares a second run, checks authenticated SSE delivery during both stages, reconnect/late replay, persisted API results and an unavailable-endpoint failure. That Cycle 2 verifier supplies a metadata SHA; use the Cycle 3 verifier below to exercise actual distinct Git revisions.
 
 For a manual request, export your private env values in your terminal and use:
 
@@ -162,4 +162,28 @@ git diff --check
 
 With an isolated PostgreSQL test database, `EVALCI_TEST_DATABASE_URL=... python -m pytest -q` also runs PostgreSQL persistence and migration checks. For real-browser verification against the fixture stack, `node scripts/verify_dashboard.cjs API_URL PRIVATE_ENV_FILE [CHROME_EXECUTABLE]` launches a separate headless Chrome profile and saves screenshots/observations under `artifacts/cycle2`. The default executable is the standard macOS Chrome path. This uses the DevTools protocol and needs no browser automation package.
 
-The [Cycle 2 verification record](docs/cycle2-verification.md) lists executed commands, outcomes, failure checks, evidence and remaining limitations. Cycle 3—complete CI request/authentication configuration, evaluation of the checked-out RAG revision, all-branch triggers, merge protection and delivery/deployment—has not been started.
+The verification records distinguish local execution from external configuration. Cycle 2's real Chrome and PostgreSQL checks remain documented in its record.
+
+## Revision-bound CI/CD
+
+The workflow runs on every branch push and PR. Its stable **Quality Gate** aggregates required jobs and fails closed on failed/cancelled checks. PRs evaluate GitHub's checked-out merge revision. The runner builds candidate and baseline RAG source with the same current harness and locked dependencies, checks source digests inside running containers, and uses private authentication plus isolated Compose networks/volumes with no published ports. Evidence includes raw results, fingerprints, completion counts, configuration, baseline/candidate SHAs, source hashes and image IDs. Artifacts retain successfully tested images for delivery without rebuilding.
+
+The default gate uses synthetic fixture scoring. Live evaluation is separately opt-in and can be required; delivery additionally requires successful live evaluation of exactly the same image bytes. Delivery prepares a versioned GHCR image; it does not deploy an application. Merge protection and protected environments need the [external setup](docs/external-setup.md). Neither remote execution nor publication is claimed from YAML.
+
+With Docker, Git and host Python runtime dependencies installed, run the complete local proof from an uncommitted working tree:
+
+```bash
+python -m scripts.verify_cycle3 --output artifacts/cycle3-local
+```
+
+Use a fresh output directory. The verifier snapshots only Git-tracked/unignored source into its own temporary Git repository, creates healthy/degraded revisions, builds real images, and verifies healthy success, HIGH regression failure, unavailable-target failure, blocked failed delivery and a successful local image handoff. It preserves that synthetic Git history as `verification-revisions.bundle` for inspection and removes only its own temporary repository and Compose resources. This requires substantial image/archive disk space and makes no provider calls or remote changes.
+
+For a single clean checkout with both full SHAs already fetched:
+
+```bash
+python -m scripts.ci --candidate-sha <checked-out-full-sha> \
+  --baseline-sha <reviewed-full-sha> --mode fixture \
+  --output artifacts/ci-local --archive-images
+```
+
+`--allow-dirty` is diagnostics only and cannot produce a release image bundle. See [Cycle 3 verification and claim-to-evidence table](docs/cycle3-verification.md) and the [evidence-supported resume bullets](docs/resume-items.tex).

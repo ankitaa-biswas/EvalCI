@@ -49,3 +49,9 @@ async def query(payload: QueryRequest):
     except Exception as exc:
         logger.exception("RAG query failed")
         raise HTTPException(status_code=503, detail="RAG retrieval/generation failed; inspect rag-target logs and provider configuration") from exc
+
+
+@app.get("/identity")
+async def identity():
+    from scripts.image_identity import read_identity
+    return {**read_identity(), "mode": app.state.rag.mode}

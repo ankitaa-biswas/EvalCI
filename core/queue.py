@@ -14,7 +14,13 @@ celery_app.conf.update(task_serializer="json", result_serializer="json", accept_
     result_expires=3600, worker_prefetch_multiplier=1, task_acks_late=True)
 
 
-@celery_app.task(bind=True, name="evalci.run_evaluation", soft_time_limit=600, time_limit=660)
+_SOFT_LIMIT = int(os.getenv("EVAL_TASK_SOFT_LIMIT_SECONDS", "600"))
+_HARD_LIMIT = int(os.getenv("EVAL_TASK_TIME_LIMIT_SECONDS", "660"))
+if not 0 < _SOFT_LIMIT < _HARD_LIMIT:
+    raise ValueError("Worker time limits require 0 < soft limit < hard limit")
+
+
+@celery_app.task(bind=True, name="evalci.run_evaluation", soft_time_limit=_SOFT_LIMIT, time_limit=_HARD_LIMIT)
 def run_evaluation_task(self, run_id, commit_sha, branch, question_set_path,
                         baseline_run_id=None, rag_endpoint=None, baseline_bootstrap=False):
     asyncio.run(_async_run_evaluation(self, run_id, commit_sha, branch, question_set_path,

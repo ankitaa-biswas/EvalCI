@@ -43,3 +43,6 @@ artifacts/
 
 # Local session cache produced by provider helper imports
 :memory:.ses
+
+# Temporary baseline source staging for isolated CI builds
+.evalci-build-*/

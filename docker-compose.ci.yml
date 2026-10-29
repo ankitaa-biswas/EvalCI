@@ -1,0 +1,28 @@
+# Docker Compose >=2.24.4. No host-published ports or shared external resources.
+services:
+  api:
+    ports: !reset []
+  rag-target:
+    ports: !reset []
+  rag-baseline:
+    image: ${BASELINE_IMAGE:?Set BASELINE_IMAGE to the image built from the selected baseline RAG tree}
+    init: true
+    command: ["uvicorn", "rag_target.app:app", "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      CHROMA_HOST: chromadb
+      CHROMA_PORT: "8000"
+      CHROMA_COLLECTION: evalci_baseline_docs
+      RAG_MODE: ${RAG_MODE:-live}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      GEMINI_GENERATION_MODEL: ${GEMINI_GENERATION_MODEL:-}
+      GEMINI_EMBEDDING_MODEL: ${GEMINI_EMBEDDING_MODEL:-}
+      ANONYMIZED_TELEMETRY: "FALSE"
+    depends_on:
+      chromadb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/ready', timeout=3).close()"]
+      interval: 5s
+      timeout: 5s
+      start_period: 120s
+      retries: 30

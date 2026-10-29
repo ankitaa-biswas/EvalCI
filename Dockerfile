@@ -14,13 +14,19 @@ RUN useradd --create-home --uid 10001 evalci && mkdir -p /app/logs && chown -R e
 COPY --chown=evalci:evalci api ./api
 COPY --chown=evalci:evalci core ./core
 COPY --chown=evalci:evalci db ./db
-COPY --chown=evalci:evalci rag_target ./rag_target
+ARG RAG_SOURCE_DIR=rag_target
+COPY --chown=evalci:evalci ${RAG_SOURCE_DIR} ./rag_target
 COPY --chown=evalci:evalci dashboard ./dashboard
 COPY --chown=evalci:evalci tests ./tests
 COPY --chown=evalci:evalci scripts ./scripts
 COPY --chown=evalci:evalci alembic.ini ./
 ENV PYTHONPATH=/app
 RUN python -c "import core.judge, core.agent, rag_target.query"
+ARG REVISION_SHA=unversioned
+ARG HARNESS_REVISION_SHA=
+ARG TARGET_SOURCE_SHA256=
+RUN python -m scripts.image_identity --revision "$REVISION_SHA" --harness-revision "$HARNESS_REVISION_SHA" --expected-target-sha "$TARGET_SOURCE_SHA256" --write /app/build-info.json
+LABEL org.opencontainers.image.revision=$REVISION_SHA
 USER evalci
 EXPOSE 8080
 CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8080"]

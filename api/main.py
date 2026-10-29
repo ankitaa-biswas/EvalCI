@@ -120,3 +120,9 @@ async def readiness_check():
         return JSONResponse(status_code=503, content={"status": "not_ready", "checks": checks})
     finally:
         await redis.aclose()
+
+
+@app.get("/identity", tags=["Health"])
+async def identity():
+    from scripts.image_identity import read_identity
+    return read_identity()

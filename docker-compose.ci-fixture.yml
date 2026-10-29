@@ -1,0 +1,5 @@
+services:
+  rag-baseline:
+    environment:
+      RAG_MODE: fixture
+      GOOGLE_API_KEY: ""
