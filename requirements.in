@@ -1,0 +1,28 @@
+# Runtime inputs. Refresh requirements.lock with the uv command in README.
+fastapi==0.111.1
+uvicorn[standard]==0.29.0
+SQLAlchemy==2.0.52
+asyncpg==0.30.0
+alembic==1.19.1
+psycopg2-binary==2.9.12
+celery==5.6.3
+redis==5.3.1
+httpx==0.27.2
+pydantic==2.13.5
+python-multipart==0.0.32
+ragas==0.1.22
+datasets==5.0.1
+langchain==0.2.17
+langchain-openai==0.1.25
+langchain-google-genai==1.0.10
+chromadb==0.5.23
+numpy==1.26.4
+pandas==3.0.5
+python-dotenv==1.2.3
+# Chroma 0.5 uses the older capture signature.
+posthog==3.25.0
+# PyArrow 26 requires NumPy 2 at runtime despite permissive package metadata.
+pyarrow==25.0.1
+# Preserve the existing optional multi-provider judge helper.
+langchain-anthropic==0.1.23
+anthropic==0.125.0

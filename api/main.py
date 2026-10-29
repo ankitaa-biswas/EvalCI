@@ -6,6 +6,7 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -20,20 +21,11 @@ logger = get_logger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Manage application startup and shutdown events.
-
-    On startup:
-        - Initialise the PostgreSQL connection pool via SQLAlchemy.
-        - Verify Redis connectivity.
-        - Verify Celery worker reachability.
-
-    On shutdown:
-        - Gracefully close the DB connection pool.
-        - Flush any pending Redis operations.
-    """
+    """Manage DB lifecycle; /ready checks database, Redis and worker readiness."""
     logger.info("EvalCI starting up — initialising database connection pool.")
-    await init_db()
+    import os
+    if os.getenv("DB_AUTO_CREATE", "true").lower() == "true":
+        await init_db()
     metrics.record_eval_started("system", "startup")
     logger.info("EvalCI startup complete — observability wired, accepting requests.")
     yield
@@ -101,3 +93,30 @@ async def health_check():
     Used by Docker health-checks and GitHub Actions smoke tests.
     """
     return {"status": "ok", "service": "evalci"}
+
+
+@app.get("/ready", tags=["Health"])
+async def readiness_check():
+    """Readiness requires the migrated database, Redis and a reachable worker."""
+    import asyncio
+    from sqlalchemy import text
+    from core.cache import get_redis_client
+    from core.queue import celery_app
+    from db.database import AsyncSessionLocal
+    redis = get_redis_client()
+    checks = {}
+    try:
+        async with AsyncSessionLocal() as db:
+            revision = (await db.execute(text("SELECT version_num FROM alembic_version"))).scalar_one()
+            if revision != "c2_progress_events":
+                raise RuntimeError("Run alembic upgrade head before serving evaluations")
+        checks["database"] = True
+        checks["redis"] = bool(await redis.ping())
+        checks["worker"] = bool(await asyncio.to_thread(lambda: celery_app.control.inspect(timeout=2).ping()))
+        if not all(checks.values()):
+            raise RuntimeError("A required dependency is not ready")
+        return {"status": "ready", "checks": checks, "evaluation_mode": __import__("os").getenv("EVAL_SCORING_MODE", "ragas")}
+    except Exception:
+        return JSONResponse(status_code=503, content={"status": "not_ready", "checks": checks})
+    finally:
+        await redis.aclose()

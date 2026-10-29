@@ -1,4 +1,6 @@
-# Lightweight offline contract/API/persistence suite; no model calls.
-pytest>=8.1,<9
-pytest-asyncio>=0.23,<1
-aiosqlite>=0.20,<1
+# Install the locked runtime first; these are additional test tools.
+pytest==9.1.1
+pytest-asyncio==1.4.0
+aiosqlite==0.22.1
+iniconfig==2.3.0
+pluggy==1.6.0

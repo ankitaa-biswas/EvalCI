@@ -6,6 +6,8 @@
 import os
 from typing import AsyncGenerator
 
+from sqlalchemy.pool import NullPool
+
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -24,10 +26,11 @@ from db.models import Base
 # Async engine — uses asyncpg driver for non-blocking DB I/O
 engine = create_async_engine(
     DATABASE_URL,
-    echo=bool(os.getenv("SQL_ECHO", False)),
-    pool_size=10,
-    max_overflow=20,
+    pool_pre_ping=True,
+    echo=os.getenv("SQL_ECHO", "false").lower() == "true",
+    **({"poolclass": NullPool} if os.getenv("DB_POOL_MODE") == "null" else {"pool_size": 10, "max_overflow": 20}),
 )
+
 
 # Session factory
 AsyncSessionLocal = async_sessionmaker(

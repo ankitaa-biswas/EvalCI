@@ -2,7 +2,7 @@
 
 EvalCI evaluates RAG answers and supports regression investigation and release decisions. The fixed evaluation dataset contains **50 questions across 11 categories** in `tests/test_suite.json` and `tests/categories.json`.
 
-The current work implements **Cycle 1 only: evaluation and regression decision correctness**. Containerizing the complete stack, incremental SSE and the complete CI/CD workflow remain pending. See [the verification record](docs/cycle1-verification.md) for implemented, verified and externally configured functionality.
+The current work implements **Cycles 1 and 2**: evaluation decision correctness, the complete local container stack, and durable incremental progress. The complete CI/CD workflow remains pending Cycle 3. See the [Cycle 1 record](docs/cycle1-verification.md) and [Cycle 2 record](docs/cycle2-verification.md) for implementation, execution evidence and external configuration.
 
 ## Evaluation contract
 
@@ -21,7 +21,7 @@ Boundaries are inclusive at 0.02, 0.05 and 0.15. These are absolute score differ
 
 The gate also requires a completed comparison and all absolute quality checks: per-category thresholds and global thresholds from `categories.json`, plus `PASS_THRESHOLD` for overall correctness (default 0.70). Threshold equality passes. Missing, malformed, non-finite, boolean, nonnumeric or out-of-range metrics cannot become valid scores. Missing/malformed reports, missing baselines, scoring/request failures and incomplete evaluations fail closed.
 
-Runs retain expected, attempted, successfully scored and failed counts, plus question-level stage/error records. Completed reports require all expected questions to have been attempted and successfully scored, with zero failures. A failed evaluation saves its accounting and errors and is not eligible to supply a comparison report. Successfully scored rows from an incomplete batch are counted but are not persisted as a completed result set. Counts are saved after the scoring batch, not streamed incrementally; a killed worker can leave an unfinished run requiring investigation.
+Runs retain expected, attempted, successfully scored and failed counts, plus question-level stage/error records. Completed reports require all expected questions to have been attempted and successfully scored, with zero failures. A failed evaluation saves its accounting and errors and is not eligible to supply a comparison report. Successfully scored rows from an incomplete batch are counted but are not persisted as a completed result set. The final completion summary is saved after scoring. Request and scoring outcomes are also logged incrementally as durable progress events. A killed worker can leave an unfinished run requiring investigation; the event history records its last observed progress.
 
 ## Attribution rules
 
@@ -39,7 +39,7 @@ Signal strengths are normalized into **heuristic weights**, not calibrated proba
 
 There is no automatic latest-run fallback. Every request must contain exactly one of `baseline_run_id` or `baseline_bootstrap: true`. Selection is checked both before dispatch and in the worker. Self-comparison, missing/failed/incomplete baselines and incompatible datasets/configurations are rejected. Baselines require complete persisted question/category coverage and a validated quality-passing report. Previously compared baselines must also have passed their regression gate.
 
-Provenance includes a SHA-256 digest of canonical question JSON, the exact evaluation configuration and its digest, judge and embedding model names, temperature, Ragas and relevant scoring dependency versions, provider base-URL digest, metric set, category counts, quality/severity thresholds, request timeout, target endpoint and supplied commit SHA. API/worker settings and dataset must match between dispatch and execution. Endpoint and commit are recorded separately from compatibility settings so changed RAG targets/revisions can be compared. Commit metadata alone does not prove which code a remote target serves; that is deferred to Cycle 3.
+Provenance includes a SHA-256 digest of canonical question JSON, the exact evaluation configuration and its digest, scoring mode and batch size, judge and embedding model names, temperature, Ragas and relevant scoring dependency versions, provider base-URL digest, metric set, category counts, quality/severity thresholds, request timeout, target endpoint and supplied commit SHA. API/worker settings and dataset must match between dispatch and execution. Endpoint and commit are recorded separately from compatibility settings so changed RAG targets/revisions can be compared. Commit metadata alone does not prove which code a remote target serves; that is deferred to Cycle 3.
 
 For the first baseline:
 
@@ -48,66 +48,118 @@ For the first baseline:
 3. Explicitly select that reviewed run ID in future requests. Bootstrap is never selected automatically and **never passes the regression gate** (`passed=false`, `comparison_status=bootstrap`). A bootstrap that fails absolute quality is ineligible as a baseline.
 4. Bootstrap again deliberately when the dataset or evaluation configuration changes. Legacy rows without canonical provenance/reports cannot serve as baselines.
 
-## Local setup for Cycle 1
+## Clean start through Docker Compose
 
-From the repository directory, install `requirements.txt` and `requirements-test.txt` in a Python 3.11+ virtual environment. Configure the following in both API and worker processes; environment files are not automatically loaded by these commands:
+Docker with Compose is sufficient to run the services. All commands below run from the repository root. Use a project name of your own so volumes and containers stay isolated.
 
-| Setting | Purpose |
-| --- | --- |
-| `DATABASE_URL` | SQLAlchemy async PostgreSQL URL, `postgresql+asyncpg://...` |
-| `REDIS_URL` | Celery broker and terminal-event pub/sub |
-| `OPENAI_API_KEY` | Credentials for OpenAI-compatible Ragas judge/embeddings |
-| `EVAL_JUDGE_MODEL` | Explicit supported judge model name; no implicit default |
-| `EVAL_EMBEDDING_MODEL` | Explicit supported embedding model name; no implicit default |
-| `OPENAI_API_BASE` or `OPENAI_BASE_URL` | Optional compatible provider URL; `OPENAI_API_BASE` takes precedence |
-| `EVALCI_API_KEYS` | Comma-separated API keys; requests use `X-API-Key` |
-| `PASS_THRESHOLD` | Optional overall correctness threshold, default 0.70 |
-
-Judge/embedding configuration uses the existing Ragas 0.1.x interface and OpenAI-compatible LangChain clients. Other providers require a separate adapter. No live model request was made during Cycle 1 verification.
-
-Start existing PostgreSQL and Redis infrastructure (the existing Compose file still provides infrastructure only), then migrate and run separate processes:
+Create a private environment file with random local database/API credentials (requires only Python's standard library), or copy `.env.example` to `.env.local` and replace its placeholders:
 
 ```bash
-alembic upgrade head
-uvicorn api.main:app --port 8080
-# In a second configured terminal:
-celery -A core.queue.celery_app worker --loglevel=info --concurrency=2
+python3 scripts/create_local_env.py .env.local
 ```
 
-The Cycle 1 migration handles fresh databases and existing evaluation tables while preserving legacy data. Old timestamps without timezone are interpreted as UTC. Back up a database before upgrading. Its automatic downgrade is deliberately disabled to avoid discarding evaluation data. Startup creates missing tables for development but cannot add columns to existing tables; run the migration before upgrading the application.
+The helper refuses to overwrite existing files. `.env.local` and other private `.env.*` files are ignored by Git and excluded from image builds. Keep database passwords URL-safe (the helper uses hex).
 
-Supply a separately running HTTP RAG service with `POST {"query": "..."}` returning `{"answer": "...", "retrieved_chunks": ["..."]}` (`contexts` is also accepted). The existing `rag_target` helpers do not expose a query HTTP server yet.
+For **deterministic integration mode**, which makes no model calls:
 
-Example first-baseline request (replace the endpoint and header with your own configuration):
+```bash
+docker compose --project-name evalci-demo --env-file .env.local \
+  -f docker-compose.yml -f docker-compose.fixture.yml build api
+docker compose --project-name evalci-demo --env-file .env.local \
+  -f docker-compose.yml -f docker-compose.fixture.yml up -d --wait --wait-timeout 180 --no-build
+```
+
+The first build installs the full pinned runtime. The default services are PostgreSQL, Redis, Chroma, the migration job, HTTP RAG target, Celery worker and FastAPI. Migration completion and dependency health control startup order. Application processes run as an unprivileged user. PostgreSQL, Redis and Chroma use project-scoped named volumes; infrastructure has no host-published ports. API and target bind to localhost on 8080 and 8001 by default (`API_PORT` / `RAG_PORT` override them).
+
+Open `http://localhost:8080/dashboard/` and enter the API key from your private `.env.local`. The page is public; all evaluation data and streams require the API key. The key remains in that tab's memory and is sent in `X-API-Key`, including streaming requests. It is not stored in a URL, cookie or browser storage.
+
+The fixture target uses deterministic hash embeddings with real Chroma retrieval and returns a retrieved passage. The fixture scorer returns fixed scores to test transport, accounting and persistence. **Fixture scores are not live quality validation or attribution-accuracy evidence.** Mode is recorded in report provenance and displayed by the dashboard; fixture/live baselines are incompatible.
+
+The verifier is included in the image so host Python dependencies are unnecessary:
+
+```bash
+docker compose --project-name evalci-demo --env-file .env.local \
+  -f docker-compose.yml -f docker-compose.fixture.yml exec -T api \
+  python -m scripts.verify_cycle2 --api-url http://api:8080 \
+  --commit-sha "$(git rev-parse HEAD)" --output /tmp/cycle2-evidence
+mkdir -p artifacts
+docker compose --project-name evalci-demo --env-file .env.local \
+  -f docker-compose.yml -f docker-compose.fixture.yml cp api:/tmp/cycle2-evidence artifacts/cycle2
+```
+
+It submits all 50 questions through the actual API and Celery worker, bootstraps a fixture baseline, compares a second run, checks authenticated SSE delivery during both stages, reconnect/late replay, persisted API results and an unavailable-endpoint failure. Supplied commit SHA is metadata; revision-isolated CI validation remains Cycle 3.
+
+For a manual request, export your private env values in your terminal and use:
 
 ```bash
 curl --fail-with-body http://localhost:8080/evaluate/ \
   -H 'Content-Type: application/json' \
-  -H 'X-API-Key: YOUR_API_KEY' \
-  -d '{"commit_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","branch":"main","rag_endpoint":"http://localhost:8001/query","baseline_bootstrap":true}'
+  -H "X-API-Key: $EVALCI_API_KEYS" \
+  -d '{"commit_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","branch":"main","rag_endpoint":"http://rag-target:8001/query","baseline_bootstrap":true}'
 ```
 
-For a comparison, replace `baseline_bootstrap` with `baseline_run_id` containing the reviewed run UUID. Poll `/evaluate/{run_id}/status`; statuses are `pending`, `running`, `complete`, `failed`. Fetch `/results/{run_id}` for scores, completion, provenance and errors. Fetch `/results/{run_id}/fingerprint` for the required canonical report. An unavailable report returns an error, never an empty success response.
+The endpoint in this request is resolved by the container worker, so use the Compose service hostname. Use an explicit reviewed `baseline_run_id` for a comparison, as described above.
+
+Shutdown preserves your project's data:
 
 ```bash
-python -m core.gate fingerprint_report.json --run-id RUN_UUID --commit-sha TESTED_COMMIT_SHA
+docker compose --project-name evalci-demo --env-file .env.local \
+  -f docker-compose.yml -f docker-compose.fixture.yml down
 ```
 
-The existing workflow now consumes this same gate and rejects unavailable fingerprint responses. Its endpoint/baseline/authentication request configuration, revision isolation, full push triggers, delivery and external branch protection remain **pending Cycle 3**. It is not yet a proven CI/CD pipeline.
+Restart with the same project/env/Compose files to reuse the indexes and evaluations. Removing volumes is an explicit destructive reset of that project's data; never run a global container/volume prune as part of verification. Optional Flower monitoring is available with `--profile monitoring`. To run API/worker directly on the host, add `docker-compose.dev.yml` and start only `postgres redis chromadb`; that override publishes localhost infrastructure ports. Set host `DATABASE_URL`/`REDIS_URL` explicitly and use `DB_POOL_MODE=null` for a host Celery worker, matching the container worker’s per-task event-loop lifecycle.
 
-## Checks
+## Live model configuration
+
+For a live stack, configure `.env.local` from `.env.example` and use **only** `docker-compose.yml`, omitting the fixture override. Required settings are:
+
+| Setting | Purpose |
+| --- | --- |
+| `POSTGRES_PASSWORD`, `EVALCI_API_KEYS` | Private local database/API credentials |
+| `OPENAI_API_KEY` | OpenAI-compatible Ragas judge/embedding credentials |
+| `EVAL_JUDGE_MODEL`, `EVAL_EMBEDDING_MODEL` | Available model names, explicitly selected |
+| `OPENAI_BASE_URL` | Compatible provider base URL, default official OpenAI URL |
+| `GOOGLE_API_KEY` | Existing Gemini target provider credentials |
+| `GEMINI_GENERATION_MODEL`, `GEMINI_EMBEDDING_MODEL` | Available target models, explicitly selected |
+
+Target initialization embeds and indexes sample documents before readiness succeeds. Corpus/chunking/embedding changes select a new versioned collection; stable restarts reuse the index. Old collections are retained. The existing standalone `rag_target.query` / ingestion helpers remain available.
+
+`EVAL_SCORING_MODE=ragas` and `RAG_MODE=live` are the default modes. `EVAL_SCORING_BATCH_SIZE` (default 5), `RAG_REQUEST_TIMEOUT_SECONDS` (default 30) and `PASS_THRESHOLD` (default 0.70) are recorded in provenance. The scoring configuration changed since Cycle 1; deliberately bootstrap/review a compatible baseline after upgrading.
+
+Live Ragas/Gemini scoring and attribution accuracy are unverified in Cycle 2 because a complete configured judge/embedding credential set was unavailable. Provider model availability and quotas require external setup. No live evaluation benchmark is claimed.
+
+## Progress and replay contract
+
+`GET /stream/{run_id}` emits `progress`, `done` and `error` events. Each contains run ID, stage, completed/total counts, lifecycle status, attempted/scored/failed counts, optional question ID/error and timestamp. `completed/total` are **stage counts**: they reset when requests finish and scoring starts. Scoring occurs in configurable batches; an event is recorded for each scored/failed row after its batch returns. Scoring stage completion includes questions already failed during requests; separate scored/failed counters distinguish those outcomes. There is no claim of token-level model progress. `ping` heartbeats are emitted during quiet periods.
+
+PostgreSQL `run_events` is the replay source. Events are committed before publication to Redis, and SSE tails the durable log every 250 ms. Redis pub/sub delivery is not required for replay. Event IDs are global database integers. Reconnect with `Last-Event-ID` to receive later retained events. Without a cursor, a late subscriber receives the full run history through its terminal event. A terminal database snapshot is returned even if the worker stopped between its status commit and event append, or the reconnect cursor already includes the terminal event.
+
+Disconnects release the stream and its short-lived database sessions. Heartbeats and the browser's watchdog/reconnect loop handle idle periods and network interruption. Authentication failures stop retries and ask for a valid key. No automatic event pruning is implemented: replay is available while rows remain in the database. Manual database deletion/reset removes history. A process killed before committing terminal run state can leave a running run; this is distinguishable from a completed evaluation and cannot pass the gate.
+
+`GET /evaluate/{run_id}/status` returns the latest durable progress and final completion accounting. `/results/{run_id}` and `/results/{run_id}/fingerprint` retain the Cycle 1 contract. `/health` is liveness; `/ready` checks the migrated database, Redis and a reachable worker. It does not certify remote model availability or arbitrary submitted RAG endpoints.
+
+## Dependencies, checks and evidence
+
+`requirements.in` pins runtime inputs. `requirements.lock` pins transitive Python versions and artifact hashes for Python 3.11/Linux; the container installer enforces hashes. Python, installer, PostgreSQL, Redis and Chroma image references include immutable digests. Debian build-tool packages come from the configured Bookworm repositories, so these controls do not promise bit-for-bit identical image bytes. Only Linux ARM64 image execution was verified here; Linux AMD64 was not executed.
+
+Refresh the lock deliberately with uv 0.13.6:
 
 ```bash
+uv pip compile requirements.in --python-version 3.11 \
+  --python-platform x86_64-unknown-linux-gnu --generate-hashes -o requirements.lock
+```
+
+For host development, install the runtime first and additional test tools separately:
+
+```bash
+python -m pip install --require-hashes -r requirements.txt
+python -m pip install -r requirements-test.txt
 python -m pytest -q
-python -m compileall -q api core db
+node --test tests/test_stream_client.cjs
+python -m compileall -q api core db rag_target scripts tests
 git diff --check
 ```
 
-By default the persistence/API tests use real SQLite. To use an **isolated test PostgreSQL database** with schema-creation privileges:
+With an isolated PostgreSQL test database, `EVALCI_TEST_DATABASE_URL=... python -m pytest -q` also runs PostgreSQL persistence and migration checks. For real-browser verification against the fixture stack, `node scripts/verify_dashboard.cjs API_URL PRIVATE_ENV_FILE [CHROME_EXECUTABLE]` launches a separate headless Chrome profile and saves screenshots/observations under `artifacts/cycle2`. The default executable is the standard macOS Chrome path. This uses the DevTools protocol and needs no browser automation package.
 
-```bash
-EVALCI_TEST_DATABASE_URL='postgresql+asyncpg://TEST_USER:TEST_PASSWORD@localhost/TEST_DATABASE' \
-  python -m pytest -q
-```
-
-The PostgreSQL mode creates and drops only uniquely named test schemas. It also checks fresh and legacy migrations. HTTP responses, model scoring and terminal event publication are mocked; the worker coroutine, SQLAlchemy persistence, report validation and API handlers execute together. Redis, a Celery worker process, the complete HTTP server/middleware lifecycle, live LLM attribution accuracy, GitHub Actions and deployment are not verified by these tests.
+The [Cycle 2 verification record](docs/cycle2-verification.md) lists executed commands, outcomes, failure checks, evidence and remaining limitations. Cycle 3—complete CI request/authentication configuration, evaluation of the checked-out RAG revision, all-branch triggers, merge protection and delivery/deployment—has not been started.

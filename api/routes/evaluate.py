@@ -38,6 +38,7 @@ async def trigger_evaluation(
     from core.configuration import load_evaluation
     from core.baselines import resolve_baseline
     from core.reports import Completion
+    from core.progress import append_event, progress_payload
     question_set_path = str(payload.question_set_path or _DEFAULT_QUESTION_SET)
     try:
         questions, provenance = load_evaluation(question_set_path, payload.commit_sha, str(payload.rag_endpoint))
@@ -54,6 +55,7 @@ async def trigger_evaluation(
     run.evaluation_errors = []
     await db.commit()
     run_id = str(run.id)
+    await append_event(db, "progress", progress_payload(run, "queued"))
 
     # 3. Enqueue Celery task
     try:
@@ -74,6 +76,7 @@ async def trigger_evaluation(
         await update_run_status(
             db, run_id, DBRunStatus.FAILED, passed=False, error_message=str(exc)
         )
+        await append_event(db, "error", progress_payload(run))
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Failed to enqueue evaluation task: {exc}",
@@ -100,11 +103,11 @@ async def get_run_status(
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
 
-    progress_pct = None
-    if run.status == DBRunStatus.COMPLETE:
-        progress_pct = 100.0
-    elif run.status == DBRunStatus.RUNNING:
-        progress_pct = 50.0  # Actual progress is tracked via SSE events
+    from sqlalchemy import select
+    from db.models import RunEvent
+    event = (await db.execute(select(RunEvent).where(RunEvent.run_id == run.id).order_by(RunEvent.id.desc()).limit(1))).scalar_one_or_none()
+    progress = event.data if event else None
+    progress_pct = round(progress["completed"] / progress["total"] * 100, 1) if progress else None
 
     return {
         "run_id": run_id,
@@ -113,5 +116,6 @@ async def get_run_status(
         "passed": run.passed,
         "progress_pct": progress_pct,
         "completion": run.completion,
+        "progress": progress,
         "error_message": run.error_message,
     }

@@ -1,139 +1,116 @@
-// evalci/dashboard/stream.js
-// SSE client and utility functions for the EvalCI live dashboard.
-
 'use strict';
 
-// ---------------------------------------------------------------------------
-// SSEClient
-// ---------------------------------------------------------------------------
+// Fetch streams support X-API-Key and Last-Event-ID without putting secrets in URLs.
+class SSEParser {
+  constructor(onEvent) { this.buffer = ''; this.onEvent = onEvent; }
+  feed(chunk) {
+    this.buffer += chunk;
+    if (this.buffer.length > 1024 * 1024) throw new Error('SSE packet exceeded size limit');
+    let match;
+    while ((match = /\r?\n\r?\n/.exec(this.buffer))) {
+      const packet = this.buffer.slice(0, match.index);
+      this.buffer = this.buffer.slice(match.index + match[0].length);
+      let type = 'message', id = null, data = [];
+      for (const line of packet.split(/\r?\n/)) {
+        if (!line || line.startsWith(':')) continue;
+        const colon = line.indexOf(':');
+        const field = colon < 0 ? line : line.slice(0, colon);
+        const value = colon < 0 ? '' : line.slice(colon + 1).replace(/^ /, '');
+        if (field === 'event') type = value;
+        if (field === 'id') id = value;
+        if (field === 'data') data.push(value);
+      }
+      if (data.length) this.onEvent({type, id, data: data.join('\n')});
+    }
+  }
+}
 
 class SSEClient {
-  constructor(runId, handlers = {}, baseUrl = '/stream') {
+  constructor(runId, handlers = {}, baseUrl = '/stream', getApiKey = () => '') {
     this.runId = runId;
     this.handlers = handlers;
     this.baseUrl = baseUrl;
-    this.eventSource = null;
-    this.reconnectDelay = 1000;
-    this.reconnectTimer = null;
-    this.heartbeatTimer = null;
+    this.getApiKey = getApiKey;
+    this.lastEventId = null;
     this.isConnected = false;
     this.isTerminated = false;
-    this.HEARTBEAT_TIMEOUT_MS = 45000;
+    this.reconnectDelay = 1000;
+    this.controller = null;
+    this.heartbeatTimer = null;
+    this.reconnectTimer = null;
+    this.task = null;
   }
-
   connect() {
-    if (this.isTerminated) return;
-    const url = `${this.baseUrl}/${this.runId}`;
-    this.eventSource = new EventSource(url);
-
-    this.eventSource.onopen = () => {
-      this.isConnected = true;
-      this.reconnectDelay = 1000;
-      this._startHeartbeatWatchdog();
-    };
-
-    // Named event types from the server
-    ['score', 'progress', 'done', 'error', 'ping'].forEach((type) => {
-      this.eventSource.addEventListener(type, (e) => this._dispatch(e, type));
-    });
-
-    // Fallback for unlabelled messages
-    this.eventSource.onmessage = (e) => this._dispatch(e, 'message');
-
-    this.eventSource.onerror = () => {
-      this.isConnected = false;
-      if (this.eventSource) {
-        this.eventSource.close();
-        this.eventSource = null;
-      }
-      if (!this.isTerminated) this._scheduleReconnect();
-    };
+    if (!this.task && !this.isTerminated) this.task = this._run();
+    return this.task;
   }
-
   disconnect() {
     this.isTerminated = true;
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    if (this.heartbeatTimer) clearTimeout(this.heartbeatTimer);
-    if (this.eventSource) {
-      this.eventSource.close();
-      this.eventSource = null;
-    }
     this.isConnected = false;
+    this.controller?.abort();
+    clearTimeout(this.heartbeatTimer);
+    clearTimeout(this.reconnectTimer);
+    this.resumeReconnect?.();
   }
-
-  _dispatch(event, type) {
-    // Reset heartbeat watchdog on any incoming event
-    this._startHeartbeatWatchdog();
-
-    if (type === 'ping') return;
-
-    let data = {};
-    try { data = JSON.parse(event.data); } catch (_) {}
-
-    const handlerMap = {
-      score: this.handlers.onScore,
-      progress: this.handlers.onProgress,
-      done: this.handlers.onDone,
-      error: this.handlers.onError,
-    };
-
-    const handler = handlerMap[type];
-    if (handler) handler(data);
-
-    if (type === 'done' || type === 'error') {
-      this.disconnect();
+  _watchdog() {
+    clearTimeout(this.heartbeatTimer);
+    this.heartbeatTimer = setTimeout(() => this.controller?.abort(), 45000);
+  }
+  _dispatch(event) {
+    if (event.id !== null) this.lastEventId = event.id;
+    if (event.type === 'ping') return;
+    const data = JSON.parse(event.data);
+    const handler = {progress: 'onProgress', score: 'onScore', done: 'onDone', error: 'onError'}[event.type];
+    if (handler) this.handlers[handler]?.(data);
+    if (event.type === 'done' || event.type === 'error') this.disconnect();
+  }
+  async _run() {
+    while (!this.isTerminated) {
+      this.controller = new AbortController();
+      let reader;
+      try {
+        const headers = {Accept: 'text/event-stream'};
+        const key = this.getApiKey();
+        if (key) headers['X-API-Key'] = key;
+        if (this.lastEventId !== null) headers['Last-Event-ID'] = this.lastEventId;
+        const response = await fetch(`${this.baseUrl}/${encodeURIComponent(this.runId)}`, {headers, signal: this.controller.signal});
+        if (response.status === 401 || response.status === 403) {
+          this.handlers.onAuthError?.('Enter a valid API key to stream this run.');
+          this.disconnect();
+          return;
+        }
+        if (!response.ok || !response.body) throw new Error(`Stream HTTP ${response.status}`);
+        this.isConnected = true;
+        this.handlers.onConnectionChange?.('connected');
+        this._watchdog();
+        const parser = new SSEParser(event => this._dispatch(event));
+        const decoder = new TextDecoder();
+        reader = response.body.getReader();
+        while (!this.isTerminated) {
+          const {done, value} = await reader.read();
+          if (done) break;
+          this.reconnectDelay = 1000;
+          this._watchdog();
+          parser.feed(decoder.decode(value, {stream: true}));
+        }
+      } catch (error) {
+        if (!this.isTerminated) this.handlers.onConnectionError?.(error.message);
+      } finally {
+        this.isConnected = false;
+        clearTimeout(this.heartbeatTimer);
+        await reader?.cancel().catch(() => {});
+      }
+      if (!this.isTerminated) {
+        this.handlers.onConnectionChange?.('reconnecting');
+        await new Promise(resolve => {
+          this.resumeReconnect = resolve;
+          this.reconnectTimer = setTimeout(resolve, this.reconnectDelay);
+        });
+        this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30000);
+      }
     }
   }
-
-  _scheduleReconnect() {
-    if (this.isTerminated) return;
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30000);
-      this.connect();
-    }, this.reconnectDelay);
-  }
-
-  _startHeartbeatWatchdog() {
-    if (this.heartbeatTimer) clearTimeout(this.heartbeatTimer);
-    this.heartbeatTimer = setTimeout(() => {
-      if (!this.isTerminated) {
-        if (this.eventSource) { this.eventSource.close(); this.eventSource = null; }
-        this._scheduleReconnect();
-      }
-    }, this.HEARTBEAT_TIMEOUT_MS);
-  }
 }
 
-// ---------------------------------------------------------------------------
-// Utilities
-// ---------------------------------------------------------------------------
-
-function formatScore(score) {
-  if (score === null || score === undefined) return { pct: '—', cssClass: 'score-na' };
-  const pct = (score * 100).toFixed(1) + '%';
-  let cssClass = 'score-bad';
-  if (score >= 0.75) cssClass = 'score-good';
-  else if (score >= 0.50) cssClass = 'score-warn';
-  return { pct, cssClass };
-}
-
-function getComponentBadge(component) {
-  const map = {
-    RETRIEVER: { label: 'Retriever', icon: '🔍', colour: '#f59e0b' },
-    GENERATOR: { label: 'Generator', icon: '🤖', colour: '#ef4444' },
-    BOTH:      { label: 'Both',      icon: '⚠️', colour: '#a855f7' },
-    UNKNOWN:   { label: 'Unknown',   icon: '❓', colour: '#64748b' },
-  };
-  return map[component] || map.UNKNOWN;
-}
-
-function getSeverityClass(severity) {
-  const map = { HIGH: 'severity-high', MEDIUM: 'severity-medium', LOW: 'severity-low' };
-  return map[severity] || 'severity-low';
-}
-
-// Expose globally
-window.SSEClient = SSEClient;
-window.formatScore = formatScore;
-window.getComponentBadge = getComponentBadge;
-window.getSeverityClass = getSeverityClass;
+if (typeof window !== 'undefined') { window.SSEClient = SSEClient; window.SSEParser = SSEParser; }
+if (typeof module !== 'undefined') module.exports = {SSEClient, SSEParser};

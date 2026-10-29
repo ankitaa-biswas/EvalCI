@@ -28,12 +28,20 @@ def load_evaluation(question_set_path, commit_sha, rag_endpoint):
     declared = {c["id"]: sorted(c["question_ids"]) for c in categories}
     if actual != declared:
         raise ValueError("Dataset category membership differs from categories.json")
-    judge = os.getenv("EVAL_JUDGE_MODEL")
-    embedding = os.getenv("EVAL_EMBEDDING_MODEL")
+    mode = os.getenv("EVAL_SCORING_MODE", "ragas")
+    if mode not in {"ragas", "fixture"}:
+        raise ValueError("EVAL_SCORING_MODE must be ragas or fixture")
+    batch_size = int(os.getenv("EVAL_SCORING_BATCH_SIZE", "5"))
+    timeout = float(os.getenv("RAG_REQUEST_TIMEOUT_SECONDS", "30"))
+    if not 1 <= batch_size <= 50 or not 0 < timeout <= 120:
+        raise ValueError("Scoring batch size must be 1..50 and request timeout must be >0 and <=120 seconds")
+    judge = "fixture-not-a-model" if mode == "fixture" else os.getenv("EVAL_JUDGE_MODEL")
+    embedding = "fixture-not-an-embedding" if mode == "fixture" else os.getenv("EVAL_EMBEDDING_MODEL")
     if not judge or not embedding:
         raise ValueError("Set EVAL_JUDGE_MODEL and EVAL_EMBEDDING_MODEL explicitly on both API and worker (OpenAI-compatible Ragas scoring).")
     # A provider URL may include credentials; persist only a digest of it.
-    config = {"contract_version": 1, "ragas_version": version("ragas"), "judge_model": judge,
+    config = {"contract_version": 2, "scoring_mode": mode, "scoring_batch_size": batch_size,
+        "scoring_timeout_seconds": 180, "scoring_max_retries": 2, "ragas_version": version("ragas"), "judge_model": judge,
         "embedding_model": embedding, "temperature": 0, "metrics": list(METRICS),
         "provider_base_url_sha256": digest(provider_base_url()),
         "scoring_dependencies": {name: version(name) for name in ("langchain-openai", "openai", "datasets")},
@@ -42,7 +50,7 @@ def load_evaluation(question_set_path, commit_sha, rag_endpoint):
         "global_thresholds": definitions["global_pass_threshold"],
         "overall_correctness_threshold": metric_value(float(os.getenv("PASS_THRESHOLD", ".70")), "PASS_THRESHOLD"),
         "severity_thresholds": {"LOW": .02, "MEDIUM": .05, "HIGH": .15},
-        "request_timeout_seconds": 30.}
+        "request_timeout_seconds": timeout}
     for thresholds in [config["global_thresholds"], *config["category_thresholds"].values()]:
         for name, value in thresholds.items():
             if name not in {*METRICS, "grounding"}:

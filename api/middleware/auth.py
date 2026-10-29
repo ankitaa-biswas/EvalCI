@@ -50,6 +50,7 @@ logger = logging.getLogger(__name__)
 _PUBLIC_PATHS: frozenset[tuple[str, str]] = frozenset(
     {
         ("GET", "/health"),
+        ("GET", "/ready"),
         ("GET", "/docs"),
         ("GET", "/openapi.json"),
         ("GET", "/redoc"),
@@ -120,7 +121,7 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
         # ── Step 2: Skip auth for public paths ───────────────────────────────
         method = request.method.upper()
         path = request.url.path
-        if (method, path) in _PUBLIC_PATHS:
+        if (method, path) in _PUBLIC_PATHS or method == "GET" and (path == "/dashboard" or path.startswith("/dashboard/")):
             return await call_next(request)
 
         # ── Step 3: Validate X-API-Key header ────────────────────────────────

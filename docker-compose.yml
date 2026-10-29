@@ -1,62 +1,54 @@
-# evalci/docker-compose.yml
-# Purpose: Local development environment setup for EvalCI infrastructure.
-# Spins up PostgreSQL (database), Redis (broker + cache), ChromaDB (vector DB),
-# and a Flower instance (Celery monitoring UI).
-# The EvalCI FastAPI application and Celery workers are run separately via
-# `uvicorn` and `celery` commands during development.
+x-app: &app
+  image: ${EVALCI_IMAGE:-evalci-local:cycle2}
+  build: .
+  init: true
+  restart: unless-stopped
 
-version: "3.9"
+x-evaluation-env: &evaluation-env
+  DATABASE_URL: postgresql+asyncpg://evalci:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your private env file}@postgres:5432/evalci
+  REDIS_URL: redis://redis:6379/0
+  EVALCI_API_KEYS: ${EVALCI_API_KEYS:?Set EVALCI_API_KEYS in your private env file}
+  EVAL_SCORING_MODE: ${EVAL_SCORING_MODE:-ragas}
+  EVAL_JUDGE_MODEL: ${EVAL_JUDGE_MODEL:-}
+  EVAL_EMBEDDING_MODEL: ${EVAL_EMBEDDING_MODEL:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+  EVAL_SCORING_BATCH_SIZE: ${EVAL_SCORING_BATCH_SIZE:-5}
+  RAG_REQUEST_TIMEOUT_SECONDS: ${RAG_REQUEST_TIMEOUT_SECONDS:-30}
+  PASS_THRESHOLD: ${PASS_THRESHOLD:-0.70}
+  DB_AUTO_CREATE: "false"
 
 services:
-
-  # ──────────────────────────────────────────────────────────────
-  # PostgreSQL — primary database for run records, scores, fingerprints
-  # ──────────────────────────────────────────────────────────────
   postgres:
-    image: postgres:16-alpine
-    container_name: evalci_postgres
+    image: postgres:16.10-alpine3.22@sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297
     restart: unless-stopped
     environment:
       POSTGRES_USER: evalci
-      POSTGRES_PASSWORD: evalci
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
       POSTGRES_DB: evalci
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U evalci"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD-SHELL", "pg_isready -U evalci -d evalci"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
 
-  # ──────────────────────────────────────────────────────────────
-  # Redis — Celery broker + result backend + score cache + SSE pub/sub
-  # ──────────────────────────────────────────────────────────────
   redis:
-    image: redis:7-alpine
-    container_name: evalci_redis
+    image: redis:7.4.6-alpine3.21@sha256:3b73847e72874be07e6657b129a94761662b79bc0f679273757d4218573b2a98
     restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
-    ports:
-      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
     volumes:
       - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      interval: 3s
+      timeout: 3s
+      retries: 30
 
-  # ──────────────────────────────────────────────────────────────
-  # ChromaDB — vector database for RAG document retrieval
-  # ──────────────────────────────────────────────────────────────
   chromadb:
-    image: chromadb/chroma:0.5.23
-    container_name: evalci_chromadb
+    image: chromadb/chroma:0.5.23@sha256:18e67eecc172abbcd9413d751bde64983b3d167fe497c98f979083eb24c0c942
     restart: unless-stopped
-    ports:
-      - "8000:8000"
     environment:
       IS_PERSISTENT: "TRUE"
       PERSIST_DIRECTORY: /chroma/chroma
@@ -64,26 +56,96 @@ services:
     volumes:
       - chroma_data:/chroma/chroma
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/heartbeat', timeout=3).close()"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
 
-  # ──────────────────────────────────────────────────────────────
-  # Flower — Celery task monitoring web UI (development convenience)
-  # ──────────────────────────────────────────────────────────────
+  migrate:
+    <<: *app
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+    environment: *evaluation-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  rag-target:
+    <<: *app
+    command: ["uvicorn", "rag_target.app:app", "--host", "0.0.0.0", "--port", "8001"]
+    ports:
+      - "127.0.0.1:${RAG_PORT:-8001}:8001"
+    environment:
+      CHROMA_HOST: chromadb
+      CHROMA_PORT: "8000"
+      CHROMA_COLLECTION: evalci_docs
+      RAG_MODE: ${RAG_MODE:-live}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      GEMINI_GENERATION_MODEL: ${GEMINI_GENERATION_MODEL:-}
+      GEMINI_EMBEDDING_MODEL: ${GEMINI_EMBEDDING_MODEL:-}
+      ANONYMIZED_TELEMETRY: "FALSE"
+    depends_on:
+      chromadb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/ready', timeout=3).close()"]
+      interval: 5s
+      timeout: 5s
+      start_period: 120s
+      retries: 30
+
+  worker:
+    <<: *app
+    command: ["celery", "-A", "core.queue.celery_app", "worker", "--loglevel=info", "--concurrency=2", "--hostname=worker@%h"]
+    environment:
+      <<: *evaluation-env
+      DB_POOL_MODE: "null"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      rag-target:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "core.health", "worker"]
+      interval: 10s
+      timeout: 6s
+      start_period: 15s
+      retries: 15
+
+  api:
+    <<: *app
+    environment: *evaluation-env
+    ports:
+      - "127.0.0.1:${API_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      worker:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/ready', timeout=8).close()"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+
   flower:
     image: mher/flower:2.0
-    container_name: evalci_flower
+    profiles: [monitoring]
     restart: unless-stopped
-    command: celery flower --broker=redis://redis:6379/0 --port=5555
+    command: ["celery", "--broker=redis://redis:6379/0", "flower", "--port=5555"]
     ports:
-      - "5555:5555"
+      - "127.0.0.1:${FLOWER_PORT:-5555}:5555"
     depends_on:
       redis:
         condition: service_healthy
-    environment:
-      CELERY_BROKER_URL: redis://redis:6379/0
 
 volumes:
   postgres_data:

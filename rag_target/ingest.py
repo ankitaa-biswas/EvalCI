@@ -5,14 +5,13 @@ import os
 import uuid
 from pathlib import Path
 
-from dotenv import load_dotenv
-
-load_dotenv()  # Load GOOGLE_API_KEY and other vars from .env before anything else
+if __name__ == "__main__":
+    from dotenv import load_dotenv
+    load_dotenv()  # Preserve the standalone ingestion CLI environment behavior.
 
 import chromadb
 from chromadb.config import Settings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 CHROMA_HOST = os.getenv("CHROMA_HOST", "localhost")
 CHROMA_PORT = int(os.getenv("CHROMA_PORT", "8000"))
@@ -80,9 +79,10 @@ def embed_and_upsert(
     collection_name: str = COLLECTION_NAME,
 ) -> int:
     """
-    Embed chunks via OpenAI and upsert into ChromaDB.
+    Embed chunks via Gemini and upsert into ChromaDB.
     Returns number of chunks upserted.
     """
+    from langchain_google_genai import GoogleGenerativeAIEmbeddings
     embedder = GoogleGenerativeAIEmbeddings(model=f"models/{GEMINI_EMBEDDING_MODEL}")
     collection = client.get_or_create_collection(
         name=collection_name,

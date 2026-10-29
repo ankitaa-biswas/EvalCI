@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 import chromadb
-from langchain_google_genai import ChatGoogleGenAI, GoogleGenerativeAIEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain.schema import HumanMessage, SystemMessage
 
 from rag_target.ingest import get_chroma_client, COLLECTION_NAME, GEMINI_EMBEDDING_MODEL
@@ -76,7 +76,7 @@ async def generate_answer(question: str, contexts: list[str]) -> str:
     context_text = "\n\n---\n\n".join(contexts)
     system_content = _RAG_SYSTEM_PROMPT.format(context=context_text)
 
-    llm = ChatGoogleGenAI(model=GEMINI_GENERATION_MODEL, temperature=0.0)
+    llm = ChatGoogleGenerativeAI(model=GEMINI_GENERATION_MODEL, temperature=0.0)
     messages = [
         SystemMessage(content=system_content),
         HumanMessage(content=question),

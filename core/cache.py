@@ -11,23 +11,14 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", str(86400 * 7)))  # 7 days
 PUBSUB_CHANNEL_PREFIX = "evalci:run:"
 
-# Module-level client; initialised lazily on first call
-_redis_client: aioredis.Redis | None = None
-
-
 def get_redis_client() -> aioredis.Redis:
+    """Create a caller-owned client. Close it within the same event loop.
+
+    Celery drives a new event loop per task, so sharing a module-level async
+    connection pool across tasks is unsafe.
     """
-    Return (and lazily create) the shared async Redis client.
-    Uses connection pool under the hood via aioredis.from_url.
-    """
-    global _redis_client
-    if _redis_client is None:
-        _redis_client = aioredis.from_url(
-            REDIS_URL,
-            encoding="utf-8",
-            decode_responses=True,
-        )
-    return _redis_client
+    return aioredis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True,
+                            socket_connect_timeout=3, socket_timeout=3)
 
 
 def make_cache_key(question_id: str, commit_sha: str) -> str:

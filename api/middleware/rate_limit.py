@@ -70,6 +70,7 @@ logger = logging.getLogger(__name__)
 _PUBLIC_PATHS: frozenset[tuple[str, str]] = frozenset(
     {
         ("GET", "/health"),
+        ("GET", "/ready"),
         ("GET", "/docs"),
         ("GET", "/openapi.json"),
         ("GET", "/redoc"),
@@ -122,11 +123,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # Lazy client — created on first request to avoid blocking at import.
         self._redis: aioredis.Redis | None = None
 
-        logger.info(
-            "RateLimitMiddleware: limit=%d req/min, Redis=%s",
-            self._limit,
-            self._redis_url,
-        )
+        logger.info("RateLimitMiddleware: limit=%d req/min", self._limit)
 
     def _get_redis(self) -> aioredis.Redis:
         """Return a cached async Redis client, creating it on first call.
@@ -160,7 +157,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # ── Step 2: Skip exempt paths ─────────────────────────────────────────
         method = request.method.upper()
         path = request.url.path
-        if (method, path) in _PUBLIC_PATHS:
+        if (method, path) in _PUBLIC_PATHS or method == "GET" and (path == "/dashboard" or path.startswith("/dashboard/")):
             return await call_next(request)
 
         # ── Step 3: Identify the requester ────────────────────────────────────
@@ -214,7 +211,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         """
         api_key: str | None = getattr(request.state, "api_key", None)
         if api_key:
-            return api_key
+            import hashlib
+            return hashlib.sha256(api_key.encode()).hexdigest()
         # request.client can be None in some test environments
         host = request.client.host if request.client else "unknown"
         return host

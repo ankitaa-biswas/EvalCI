@@ -30,16 +30,22 @@ async def _async_run_evaluation(task, run_id, commit_sha, branch, question_set_p
     from core.evaluator import RAGEvaluator, aggregate_by_category, category_snapshots, thresholds_pass
     from core.fingerprinter import RegressionFingerprinter
     from core.reports import Completion
+    from core.progress import ProgressEvent, append_event, progress_payload
     from db.crud import (get_run_by_id, update_run_status, bulk_insert_question_scores,
         bulk_insert_category_scores, get_category_scores_for_run, save_fingerprint)
     from db.database import AsyncSessionLocal
     from db.models import RunStatus, QuestionScore, CategoryScore, FingerprintReport
 
-    async def notify(kind, payload):
+    redis = get_redis_client()
+
+    async def notify(db, kind, payload):
+        row = await append_event(db, kind, payload)
         try:
-            await publish_score_event(get_redis_client(), run_id, kind, payload)
+            await publish_score_event(redis, run_id, kind, {**row.data, "event_id": row.id})
         except Exception:
-            logger.exception("Could not publish terminal evaluation event for %s", run_id)
+            # PostgreSQL is the replay source. Redis publication is a wake-up
+            # hint for legacy subscribers and does not decide evaluation success.
+            logger.exception("Redis event publication failed for %s", run_id)
 
     async with AsyncSessionLocal() as db:
         run = None
@@ -60,6 +66,7 @@ async def _async_run_evaluation(task, run_id, commit_sha, branch, question_set_p
             run.completion = Completion(expected=len(questions), attempted=0, successfully_scored=0, failed=0).model_dump()
             run.evaluation_errors = []
             await db.commit()
+            await notify(db, "progress", progress_payload(run, "starting"))
             baseline_provenance = None
             if baseline_run_id:
                 _, baseline_provenance = await resolve_baseline(db, baseline_run_id, run_id, provenance)
@@ -69,7 +76,13 @@ async def _async_run_evaluation(task, run_id, commit_sha, branch, question_set_p
             await db.commit()
             config = provenance.configuration
             evaluator = RAGEvaluator(timeout=config["request_timeout_seconds"], configuration=config)
-            batch = await asyncio.to_thread(evaluator.evaluate, questions, rag_endpoint)
+            loop = asyncio.get_running_loop()
+            def on_progress(payload):
+                # The evaluator runs in a thread. Complete each durable append
+                # on this loop before the next question advances.
+                event = ProgressEvent(run_id=run_id, evaluation_mode=config.get("scoring_mode", "ragas"), **payload)
+                asyncio.run_coroutine_threadsafe(notify(db, "progress", event), loop).result(timeout=30)
+            batch = await asyncio.to_thread(evaluator.evaluate, questions, rag_endpoint, on_progress)
             run.completion = batch.completion.model_dump()
             run.evaluation_errors = batch.errors
             await db.commit()
@@ -85,6 +98,7 @@ async def _async_run_evaluation(task, run_id, commit_sha, branch, question_set_p
                               for m in config["metrics"]}
             quality_passed = (round(overall - config["overall_correctness_threshold"], 12) >= 0 and
                 all(c["passed"] for c in categories.values()) and thresholds_pass(global_metrics, config["global_thresholds"]))
+            await notify(db, "progress", progress_payload(run, "persisting"))
             await bulk_insert_question_scores(db, run_id, scores)
             await bulk_insert_category_scores(db, run_id, categories)
             baseline = await get_category_scores_for_run(db, baseline_run_id) if baseline_run_id else {}
@@ -93,16 +107,18 @@ async def _async_run_evaluation(task, run_id, commit_sha, branch, question_set_p
                 current=category_snapshots(categories), baseline=category_snapshots(baseline), quality_passed=quality_passed)
             await save_fingerprint(db, run_id, baseline_run_id, report.model_dump(mode="json"))
             await update_run_status(db, run_id, RunStatus.COMPLETE, overall_score=overall, passed=report.gate_passed)
-            await notify("done", {"run_id": run_id, "overall_score": overall,
-                "passed": report.gate_passed, "fingerprint_available": True})
+            await notify(db, "done", progress_payload(run))
         except Exception as exc:
             logger.exception("Evaluation %s failed", run_id)
             await db.rollback()
             await update_run_status(db, run_id, RunStatus.FAILED, passed=False, error_message=str(exc))
-            await notify("error", {"run_id": run_id, "error": str(exc)})
+            failed_run = await get_run_by_id(db, run_id)
+            await notify(db, "error", progress_payload(failed_run))
             # Deterministic configuration/scoring errors must not be retried into
             # duplicate rows. A new request explicitly starts a new evaluation.
             raise
+        finally:
+            await redis.aclose()
 
 
 def dispatch_eval_task(run_id, commit_sha, branch, question_set_path="tests/test_suite.json",

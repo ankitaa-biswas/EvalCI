@@ -23,37 +23,59 @@ class RAGEvaluator:
         self._timeout = timeout
         self.configuration = configuration or {}
 
-    def evaluate(self, questions, rag_endpoint):
+    def evaluate(self, questions, rag_endpoint, on_progress=None):
         if not rag_endpoint:
             raise ValueError("Set rag_endpoint to the HTTP(S) RAG query URL in the evaluation request.")
         if not questions or len({q["id"] for q in questions}) != len(questions):
             raise ValueError("Question set must be nonempty with unique IDs")
-        successful, outputs, errors = [], [], []
+        successful, outputs, errors, scores = [], [], [], []
         attempted = 0
+
+        def emit(stage, completed, question_id=None, error=None):
+            if on_progress:
+                on_progress(dict(stage=stage, completed=completed, total=len(questions), status="running",
+                    attempted=attempted, successfully_scored=len(scores), failed=len(errors),
+                    question_id=question_id, error=error))
+
+        emit("rag_requests", 0)
         with httpx.Client(timeout=self._timeout) as client:
             for q in questions:
                 attempted += 1
+                error = None
                 try:
                     output = self._call_rag_endpoint(client, rag_endpoint, q)
                     successful.append(q)
                     outputs.append(output)
                 except Exception as exc:
-                    errors.append({"question_id": q["id"], "stage": "rag_request", "error": str(exc)})
-        scores = []
-        if successful:
+                    error = str(exc)
+                    errors.append({"question_id": q["id"], "stage": "rag_request", "error": error})
+                emit("rag_requests", attempted, q["id"], error)
+        processed = len(errors)
+        emit("scoring", processed)
+        size = self.configuration.get("scoring_batch_size", 5)
+        for start in range(0, len(successful), size):
+            batch_q = successful[start:start+size]
+            batch_r = outputs[start:start+size]
             try:
-                dataset = self._build_ragas_dataset(successful, outputs)
+                dataset = self._build_ragas_dataset(batch_q, batch_r)
                 frame = self._run_ragas(dataset)
-                if len(frame) != len(successful):
+                if len(frame) != len(batch_q):
                     raise ValueError("Scorer returned a different number of rows than requested")
             except Exception as exc:
-                errors.extend({"question_id": q["id"], "stage": "scoring", "error": str(exc)} for q in successful)
+                for q in batch_q:
+                    errors.append({"question_id": q["id"], "stage": "scoring", "error": str(exc)})
+                    processed += 1
+                    emit("scoring", processed, q["id"], str(exc))
             else:
-                for idx, (q, output) in enumerate(zip(successful, outputs)):
+                for idx, (q, output) in enumerate(zip(batch_q, batch_r)):
+                    error = None
                     try:
                         scores.append(score_to_dict(q, output, frame.iloc[idx].to_dict()))
                     except Exception as exc:
-                        errors.append({"question_id": q["id"], "stage": "scoring", "error": str(exc)})
+                        error = str(exc)
+                        errors.append({"question_id": q["id"], "stage": "scoring", "error": error})
+                    processed += 1
+                    emit("scoring", processed, q["id"], error)
         return EvaluationBatch(scores, Completion(expected=len(questions), attempted=attempted,
             successfully_scored=len(scores), failed=attempted-len(scores)), errors)
 
@@ -78,16 +100,22 @@ class RAGEvaluator:
             "answer": [r["answer"] for r in outputs], "contexts": [r["retrieved_chunks"] for r in outputs]})
 
     def _run_ragas(self, dataset):
+        if self.configuration.get("scoring_mode") == "fixture":
+            # Explicit transport-only integration fixture; never live quality evidence.
+            from tests.integration.fixture_scoring import score_fixture
+            return score_fixture(dataset)
         from core.configuration import provider_base_url
         from langchain_openai import ChatOpenAI, OpenAIEmbeddings
         from ragas import evaluate
+        from ragas.run_config import RunConfig
         from ragas.metrics import answer_correctness, faithfulness, context_recall, context_precision
         config = self.configuration
         if not config.get("judge_model") or not config.get("embedding_model"):
             raise ValueError("Set EVAL_JUDGE_MODEL and EVAL_EMBEDDING_MODEL on the API and worker.")
         result = evaluate(dataset, metrics=[answer_correctness, faithfulness, context_recall, context_precision],
             llm=ChatOpenAI(model=config["judge_model"], temperature=0, base_url=provider_base_url()),
-            embeddings=OpenAIEmbeddings(model=config["embedding_model"], base_url=provider_base_url()), raise_exceptions=True)
+            embeddings=OpenAIEmbeddings(model=config["embedding_model"], base_url=provider_base_url()), raise_exceptions=True,
+            run_config=RunConfig(timeout=config.get("scoring_timeout_seconds", 180), max_retries=2, max_workers=5))
         return result.to_pandas()
 
 

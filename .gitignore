@@ -1,5 +1,7 @@
 # Environments
 .env
+.env.*
+!.env.example
 .venv
 env/
 venv/
@@ -35,3 +37,9 @@ htmlcov/
 # Local data (e.g. results from runs, temporary JSONs if generated during dev)
 eval_results.json
 fingerprint_report.json
+
+# Local integration evidence (reports, browser captures)
+artifacts/
+
+# Local session cache produced by provider helper imports
+:memory:.ses

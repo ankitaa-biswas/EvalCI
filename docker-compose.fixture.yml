@@ -1,0 +1,20 @@
+# Explicit deterministic integration mode: exercises services, not live quality.
+services:
+  migrate:
+    environment:
+      EVAL_SCORING_MODE: fixture
+  api:
+    environment:
+      EVAL_SCORING_MODE: fixture
+      OPENAI_API_KEY: ""
+      RAG_REQUEST_TIMEOUT_SECONDS: "2"
+      RATE_LIMIT_PER_MINUTE: "600"
+  worker:
+    environment:
+      EVAL_SCORING_MODE: fixture
+      OPENAI_API_KEY: ""
+      RAG_REQUEST_TIMEOUT_SECONDS: "2"
+  rag-target:
+    environment:
+      RAG_MODE: fixture
+      GOOGLE_API_KEY: ""

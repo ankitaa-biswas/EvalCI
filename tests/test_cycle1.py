@@ -299,8 +299,8 @@ async def test_worker_scoring_failure_is_failed_not_partial_pass(pipeline, clien
     submit, tasks = pipeline
     baseline = await submit()
     monkeypatch.setattr(RAGEvaluator,"_run_ragas",lambda self,d: pd.DataFrame([
-        {"answer_correctness":.99,"faithfulness":float("nan") if i == 0 else .99,
-         "context_recall":.99,"context_precision":.99} for i,_ in enumerate(d)]))
+        {"answer_correctness":.99,"faithfulness":float("nan") if q["id"] == "q001" else .99,
+         "context_recall":.99,"context_precision":.99} for i,q in enumerate(d)]))
     with pytest.raises(ValueError, match="Incomplete"):
         await submit(baseline)
     failed = list(tasks)[-1]

@@ -233,3 +233,13 @@ class FailureCluster(Base):
 # Sync engine (used by Alembic migrations only)
 # ---------------------------------------------------------------------------
 
+
+
+class RunEvent(Base):
+    """Durable ordered SSE log. IDs are global monotonic database integers."""
+    __tablename__ = "run_events"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(UUID(as_uuid=True), ForeignKey("eval_runs.id"), nullable=False, index=True)
+    kind = Column(String, nullable=False)
+    data = Column(JSON, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
